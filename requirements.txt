@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+requests
+websockets
+python-dotenv
+psutil
+onvif-zeep
+cryptography
+opencv-python-headless

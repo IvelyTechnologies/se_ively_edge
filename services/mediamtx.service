@@ -1,0 +1,7 @@
+[Unit]
+Description=MediaMTX RTSP/WebRTC server
+After=network.target
+
+[Service]
+ExecStart=/opt/ively/mediamtx/mediamtx /opt/ively/mediamtx/mediamtx.yml
+Restart=always

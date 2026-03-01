@@ -1,0 +1,8 @@
+[Unit]
+Description=Ively SmartEye™ Edge Agent
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/ively/edge
+ExecStart=/usr/bin/python3 -m agent.main
+Restart=always
