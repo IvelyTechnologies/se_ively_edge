@@ -37,23 +37,67 @@ services/           # systemd unit files
   └── ively-provision.service
 ```
 
-## Quick start
+## Installation (industry-standard one-click)
 
-1. **Install (on the MINI PC)**
+Install on the **edge device** (e.g. MINI PC, Raspberry Pi, or any Debian/Ubuntu machine). **Do not** run the installer inside a Python venv or from your laptop — run it **as root on the device** where the agent will run.
 
-   ```bash
-   bash installer/install.sh
-   ```
+### Prerequisites
 
-2. **Provision** – Open `http://<device-ip>:8080` (or `http://edge.local`), enter camera credentials, and complete device registration.
+- **OS:** Debian or Ubuntu (Raspberry Pi OS, Armbian, or x86_64).
+- **Network:** Device and cameras on same LAN; device can reach the cloud (e.g. `cloud.ively.ai`) for registration.
+- **Access:** SSH or console to the device, with `sudo`.
 
-3. **Runtime** – The agent and MediaMTX run as systemd services; the agent keeps a WebSocket connection to the cloud for P2P communication.
+### Step 1 — Run the installer (recommended: system Python)
 
-4. **Verify streams (P2P video view)** – After installation, open **http://edge.local:8080** (or `http://<device-ip>:8080`). You get the **stream viewer**: click a stream (e.g. `cam1_hd`) to play the live camera feed from MediaMTX (WebRTC). This confirms P2P pipelines are working without using the cloud.
+Clone or copy this repo onto the device, then run the installer **once** as root:
 
-5. **OTA** – From the cloud dashboard, send an update command; edge backs up, pulls, installs, and rolls back automatically if health check fails. See [docs/OTA_CLOUD.md](docs/OTA_CLOUD.md) for cloud integration.
+```bash
+cd /path/to/se_ively_edge
+sudo bash installer/install.sh
+```
 
-**Cloud / AI:** For AI inference, use the **`_low`** stream path (e.g. `{customer}_{site}_cam1_low`) to reduce bandwidth. Full URL format: [docs/STREAM_URLS_CLOUD.md](docs/STREAM_URLS_CLOUD.md).
+- The script installs system packages (`python3`, `pip`, `ffmpeg`, `git`, etc.), clones the repo to `/opt/ively/edge` if needed, installs Python dependencies **system-wide**, installs MediaMTX and systemd units, and starts the **provisioning UI**.
+- **Do not** activate a venv before running `install.sh`; the script is intended to run with the system Python.
+
+### Step 2 — Optional: install using a virtualenv
+
+If you prefer dependency isolation (e.g. avoid conflicting with other Python apps on the same machine), use the venv installer:
+
+```bash
+sudo bash installer/install-with-venv.sh
+```
+
+- Creates `/opt/ively/venv` and installs dependencies there.
+- systemd services are configured to use `/opt/ively/venv/bin/python3`.
+
+### Step 3 — Provision the device (web UI)
+
+1. On the same network as the device, open a browser: **http://edge.local** or **http://&lt;device-ip&gt;:8080**.
+2. Fill in **Cloud URL** (e.g. `cloud.ively.ai`), **Customer name**, **Site name**, camera manufacturer, and camera username/password.
+3. Click **Start Setup**. The device registers with the cloud, saves credentials, discovers cameras, and generates the MediaMTX config. The provisioning service then stops and the agent starts.
+
+### Step 4 — Verify
+
+- **Stream viewer:** Open **http://edge.local:8080** (or **http://&lt;device-ip&gt;:8080**). You should see the stream list; click a stream to confirm live video (P2P via MediaMTX).
+- **Services:** `systemctl status ively-agent mediamtx` — both should be `active (running)`.
+
+### Quick reference
+
+| What              | Command / URL |
+|-------------------|----------------|
+| Install (system)  | `sudo bash installer/install.sh` |
+| Install (venv)    | `sudo bash installer/install-with-venv.sh` |
+| Provision UI      | http://edge.local:8080 or http://&lt;device-ip&gt;:8080 |
+| Stream viewer     | http://edge.local:8080/view (after provisioning) |
+| Agent logs        | `journalctl -u ively-agent -f` |
+
+---
+
+## After installation
+
+- **Runtime** — The agent and MediaMTX run as systemd services; the agent keeps a WebSocket connection to the cloud for P2P communication.
+- **OTA** — From the cloud dashboard, send an update command; edge backs up, pulls, installs, and rolls back automatically if health check fails. See [docs/OTA_CLOUD.md](docs/OTA_CLOUD.md) for cloud integration.
+- **Cloud / AI** — For AI inference, use the **`_low`** stream path (e.g. `{customer}_{site}_cam1_low`) and HLS URL. See [docs/STREAM_URLS_CLOUD.md](docs/STREAM_URLS_CLOUD.md).
 
 ## License
 
