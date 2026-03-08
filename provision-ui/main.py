@@ -206,7 +206,7 @@ def _setup_form_html() -> str:
       <form method="post" action="/setup">
         <div class="field">
           <label for="cloud_url">Cloud URL</label>
-          <input id="cloud_url" name="cloud_url" type="url" placeholder="cloud.ively.ai" value="cloud.ively.ai" required>
+          <input id="cloud_url" name="cloud_url" type="text" placeholder="cloud.ively.ai or IP" value="cloud.ively.ai" required>
         </div>
         <div class="field">
           <label for="customer">Customer name</label>
