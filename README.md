@@ -78,7 +78,7 @@ sudo bash installer/install-with-venv.sh
 
 ### Step 4 — Verify
 
-- **Stream viewer:** Open **http://edge.local:2025** (or **http://&lt;device-ip&gt;:2025**). You should see the stream list; click a stream to confirm live video (P2P via MediaMTX).
+- **Stream viewer:** Open **http://edge.local:8080** (or **http://&lt;device-ip&gt;:8080**). You should see the stream list; click a stream to confirm live video (P2P via MediaMTX).
 - **Services:** `systemctl status ively-agent mediamtx` — both should be `active (running)`.
 
 ### Quick reference
@@ -88,29 +88,39 @@ sudo bash installer/install-with-venv.sh
 | Install (system)  | `sudo bash installer/install.sh` |
 | Install (venv)    | `sudo bash installer/install-with-venv.sh` |
 | Provision UI      | http://edge.local:2025 or http://&lt;device-ip&gt;:2025 |
-| Stream viewer     | http://edge.local:2025/view (after provisioning) |
+| Stream viewer     | http://edge.local:8080/view (after provisioning) |
 | Agent logs        | `journalctl -u ively-agent -f` |
 
 ### If http://&lt;device-ip&gt;:2025 does not load ("unable to connect")
 
+- **Port conflict:** Provision UI uses **port 2025**; the agent (stream viewer) uses **port 8080**. If you started both services, only one can use 2025. For provisioning, stop the agent so the provision service can bind:  
+  `sudo systemctl stop ively-agent`  
+  then  
+  `sudo systemctl start ively-provision`
+
 On the **device** (SSH or console), run:
 
 ```bash
-# 1) Check the provision service is running
+# 1) Stop the agent so 2025 is free for the provision UI
+sudo systemctl stop ively-agent
+
+# 2) Start (or restart) the provision UI
+sudo systemctl start ively-provision
+
+# 3) Check the provision service and recent logs
 sudo systemctl status ively-provision
+sudo journalctl -u ively-provision -n 40 --no-pager
 
-# 2) If it's failed or inactive, view recent logs
-sudo journalctl -u ively-provision -n 30 --no-pager
-
-# 3) Open port 2025 in the firewall (Ubuntu/Debian)
+# 4) Open ports in the firewall (Ubuntu/Debian)
 sudo ufw allow 2025/tcp
-# If ufw is active you may need: sudo ufw reload
+sudo ufw allow 8080/tcp
 
-# 4) Confirm something is listening on 2025
+# 5) Confirm something is listening on 2025
 ss -tlnp | grep 2025
 ```
 
-Then try **http://&lt;device-ip&gt;:2025** again from your browser (use the device’s actual IP from the install message or `hostname -I`).
+Then try **http://&lt;device-ip&gt;:2025** again from your browser (use the device’s actual IP from the install message or `hostname -I`).  
+After provisioning, use **http://&lt;device-ip&gt;:8080/view** for the stream viewer.
 
 ---
 

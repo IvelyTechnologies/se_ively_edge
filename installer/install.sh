@@ -36,15 +36,21 @@ systemctl daemon-reload
 systemctl enable ively-provision
 systemctl start ively-provision
 
-# Allow port 2025 so the provision UI is reachable from other machines
+# Allow ports: 2025 = provision UI, 8080 = agent/stream viewer
 if command -v ufw >/dev/null 2>&1; then
   ufw allow 2025/tcp 2>/dev/null || true
+  ufw allow 8080/tcp 2>/dev/null || true
 fi
 
-# Give uvicorn a moment to bind
-sleep 3
-if ! ss -tlnp 2>/dev/null | grep -q ':2025 '; then
+# Give uvicorn time to bind; detect crash loop
+sleep 5
+RESTARTS=$(systemctl show ively-provision -p NRestarts --value 2>/dev/null || echo "0")
+if [ -n "$RESTARTS" ] && [ "$RESTARTS" -gt 3 ]; then
+  echo "WARNING: ively-provision has restarted ${RESTARTS} times (likely crashing). Check logs:"
+  echo "  sudo journalctl -u ively-provision -n 40 --no-pager"
+elif ! ss -tlnp 2>/dev/null | grep -q ':2025 '; then
   echo "WARNING: Port 2025 may not be listening. Check: systemctl status ively-provision"
+  echo "  sudo journalctl -u ively-provision -n 40 --no-pager"
 fi
 
 echo ""
@@ -54,5 +60,5 @@ DEVICE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$DEVICE_IP" ] && DEVICE_IP="<this-device-ip>"
 echo "1. Open http://edge.local or http://${DEVICE_IP}:2025"
 echo "2. Enter Cloud URL, Customer, Site, camera credentials, then Start Setup"
-echo "3. After provisioning, streams: http://edge.local:2025/view"
-echo "If connection fails: sudo systemctl status ively-provision  &&  sudo ufw allow 2025/tcp"
+echo "3. After provisioning, streams: http://edge.local:8080/view"
+echo "If connection fails: sudo journalctl -u ively-provision -n 40 --no-pager   then  sudo ufw allow 2025/tcp"

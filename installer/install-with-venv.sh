@@ -43,6 +43,9 @@ WorkingDirectory=/opt/ively/edge/provision-ui
 Environment="PATH=/opt/ively/venv/bin:/usr/local/bin:/usr/bin"
 ExecStart=$PYVENV -m uvicorn main:app --host 0.0.0.0 --port 2025
 Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -53,15 +56,21 @@ systemctl daemon-reload
 systemctl enable ively-provision ively-agent mediamtx
 systemctl start ively-provision
 
-# Allow port 2025 so the provision UI is reachable from other machines
+# Allow ports: 2025 = provision UI, 8080 = agent/stream viewer
 if command -v ufw >/dev/null 2>&1; then
   ufw allow 2025/tcp 2>/dev/null || true
+  ufw allow 8080/tcp 2>/dev/null || true
 fi
 
-# Give uvicorn a moment to bind
-sleep 3
-if ! ss -tlnp 2>/dev/null | grep -q ':2025 '; then
+# Give uvicorn time to bind; detect crash loop
+sleep 5
+RESTARTS=$(systemctl show ively-provision -p NRestarts --value 2>/dev/null || echo "0")
+if [ -n "$RESTARTS" ] && [ "$RESTARTS" -gt 3 ]; then
+  echo "WARNING: ively-provision has restarted ${RESTARTS} times (likely crashing). Check logs:"
+  echo "  sudo journalctl -u ively-provision -n 40 --no-pager"
+elif ! ss -tlnp 2>/dev/null | grep -q ':2025 '; then
   echo "WARNING: Port 2025 may not be listening. Check: systemctl status ively-provision"
+  echo "  sudo journalctl -u ively-provision -n 40 --no-pager"
 fi
 
 echo ""
@@ -71,4 +80,5 @@ DEVICE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$DEVICE_IP" ] && DEVICE_IP=$(ip -4 route get 1 2>/dev/null | awk '{print $7; exit}')
 [ -z "$DEVICE_IP" ] && DEVICE_IP="<device-ip>"
 echo "Open http://edge.local or http://${DEVICE_IP}:2025 to provision."
-echo "If connection fails: sudo systemctl status ively-provision  &&  sudo ufw allow 2025/tcp"
+echo "After setup, stream viewer: http://${DEVICE_IP}:8080/view"
+echo "If connection fails: sudo journalctl -u ively-provision -n 40 --no-pager   then  sudo ufw allow 2025/tcp"

@@ -27,7 +27,7 @@ def _stream_paths():
 
 @app.get("/")
 def root():
-    """Redirect to stream viewer so http://edge.local:2025 shows streams after install."""
+    """Redirect to stream viewer so http://edge.local:8080 shows streams after install."""
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/view", status_code=302)
 
@@ -50,7 +50,7 @@ def view():
 
     # Use same host as request so it works via edge.local or IP
     base = "http://localhost"
-    # When accessed as http://edge.local:2025/view, we want links to edge.local:8889
+    # When accessed as http://edge.local:8080/view, we want links to edge.local:8889
     # So we use a small JS that replaces host with current window.location.hostname
     rows = "".join(
         f"""
@@ -104,7 +104,7 @@ def view():
 """
 
 
-def start_health(host: str = "0.0.0.0", port: int = 2025):
+def start_health(host: str = "0.0.0.0", port: int = 8080):
     """Run the health + view server in a daemon thread (so main thread can run WebSocket)."""
     import uvicorn
 
