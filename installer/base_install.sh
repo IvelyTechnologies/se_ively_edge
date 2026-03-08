@@ -2,9 +2,23 @@
 
 mkdir -p /recordings
 
-# Download MediaMTX (retry on failure; GitHub redirects require curl -L or wget --redirect)
-MEDIAMTX_URL="https://github.com/bluenviron/mediamtx/releases/latest/download/mediamtx_linux_amd64.tar.gz"
+# Download MediaMTX — resolve latest version (assets are named mediamtx_vX.Y.Z_linux_amd64.tar.gz)
 MEDIAMTX_TGZ="/tmp/mediamtx.tar.gz"
+MEDIAMTX_TAG=""
+for i in 1 2 3; do
+  if command -v curl >/dev/null 2>&1; then
+    MEDIAMTX_TAG=$(curl -sL "https://api.github.com/repos/bluenviron/mediamtx/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+  fi
+  [ -n "$MEDIAMTX_TAG" ] && break
+  echo "Resolve attempt $i failed, retrying in 2s..."
+  sleep 2
+done
+if [ -z "$MEDIAMTX_TAG" ]; then
+  echo "ERROR: Could not resolve MediaMTX latest release (check api.github.com)."
+  exit 1
+fi
+MEDIAMTX_URL="https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_TAG}/mediamtx_${MEDIAMTX_TAG}_linux_amd64.tar.gz"
+
 download_ok=
 for i in 1 2 3; do
   if command -v curl >/dev/null 2>&1; then
@@ -18,8 +32,8 @@ for i in 1 2 3; do
 done
 if ! [ -s "$MEDIAMTX_TGZ" ]; then
   echo "ERROR: Failed to download MediaMTX (file missing or empty)."
+  echo "  URL: $MEDIAMTX_URL"
   echo "  Check: 1) Device can reach github.com  2) No proxy/firewall blocking"
-  echo "  Manual: curl -fL -o $MEDIAMTX_TGZ $MEDIAMTX_URL"
   exit 1
 fi
 
