@@ -3,19 +3,23 @@
 # Run as root on the device. Use this if you prefer venv over system-wide pip.
 set -e
 
-# Bold cyan banner (no effect if not a TTY)
+# Bold cyan banner — aligned box, prominent size (top/mid/bottom same width)
 _banner() {
   local B='\033[1m'
   local C='\033[36m'
   local R='\033[0m'
   local msg="$1"
-  local width=52
-  local line
-  line=$(printf '═%.0s' $(seq 1 "$width"))
+  local fill_width=56
+  local content_width=53
+  local line pad
+  line=$(printf '═%.0s' $(seq 1 "$fill_width"))
+  pad=$(printf '%*s' $((content_width - ${#msg})) '')
+  echo ""
   echo ""
   echo -e "${C}${B}  ╔${line}╗${R}"
-  printf "${C}${B}  ║  %-${width}s  ║${R}\n" "$msg"
+  echo -e "${C}${B}  ║  ${msg}${pad}  ║${R}"
   echo -e "${C}${B}  ╚${line}╝${R}"
+  echo ""
   echo ""
 }
 

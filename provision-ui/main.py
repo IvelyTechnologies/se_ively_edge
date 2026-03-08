@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse
+import os
 import subprocess
+import sys
 
 app = FastAPI()
 
@@ -32,42 +34,266 @@ MANUFACTURERS = [
 ]
 
 
-@app.get("/", response_class=HTMLResponse)
-def page():
+def _styles() -> str:
+    return """
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #7dd3fc;
+      --success: #34d399;
+      --radius: 12px;
+      --shadow: 0 25px 50px -12px rgba(0,0,0,0.4);
+      --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      line-height: 1.5;
+    }
+    .page {
+      width: 100%;
+      max-width: 420px;
+    }
+    .logo {
+      text-align: center;
+      margin-bottom: 1.75rem;
+    }
+    .logo h1 {
+      font-size: clamp(1.25rem, 4vw, 1.5rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .logo p {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.75rem;
+      box-shadow: var(--shadow);
+    }
+    .card h2 {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 1.25rem;
+    }
+    .field {
+      margin-bottom: 1.25rem;
+    }
+    .field:last-of-type { margin-bottom: 0; }
+    .field label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 0.375rem;
+    }
+    .field label .optional { font-weight: 400; color: var(--text-muted); }
+    .field input,
+    .field select {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      font-family: inherit;
+      font-size: 1rem;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .field input::placeholder { color: var(--text-muted); opacity: 0.8; }
+    .field input:focus,
+    .field select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
+    }
+    .field select {
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 1rem center;
+      padding-right: 2.5rem;
+    }
+    .btn {
+      width: 100%;
+      margin-top: 1.5rem;
+      padding: 0.875rem 1.25rem;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--bg);
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.05s;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn:active { transform: scale(0.99); }
+    .btn:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.35);
+    }
+    .footer {
+      text-align: center;
+      margin-top: 1.5rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+    }
+    /* Success page */
+    .success-card {
+      text-align: center;
+      padding: 2rem 1.75rem;
+    }
+    .success-icon {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 1.25rem;
+      background: rgba(52, 211, 153, 0.15);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.75rem;
+    }
+    .success-card h2 { text-transform: none; font-size: 1.125rem; color: var(--text); margin-bottom: 0.5rem; }
+    .success-card p { color: var(--text-muted); font-size: 0.9375rem; }
+    """
+
+
+def _setup_form_html() -> str:
     options = "".join(
         f'<option value="{v}">{label}</option>' for v, label in MANUFACTURERS
     )
     return f"""
-    <h2>Ively SmartEye™ Setup</h2>
-    <form method='post' action='/setup'>
-      Cloud URL: <input name='cloud_url' placeholder='cloud.ively.ai' value='cloud.ively.ai' required><br>
-      Customer name: <input name='customer' placeholder='e.g. Acme Corp' required><br>
-      Site name: <input name='site' placeholder='e.g. Warehouse A' required><br>
-      Camera manufacturer: <select name='manufacturer'>{options}</select><br>
-      Camera Username: <input name='user'><br>
-      Camera Password: <input name='pwd' type='password'><br>
-      <button>Start Setup</button>
-    </form>
-    """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ively SmartEye — Setup</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="page">
+    <div class="logo">
+      <h1>Ively SmartEye™</h1>
+      <p>Edge device setup</p>
+    </div>
+    <div class="card">
+      <h2>Provision device</h2>
+      <form method="post" action="/setup">
+        <div class="field">
+          <label for="cloud_url">Cloud URL</label>
+          <input id="cloud_url" name="cloud_url" type="url" placeholder="cloud.ively.ai" value="cloud.ively.ai" required>
+        </div>
+        <div class="field">
+          <label for="customer">Customer name</label>
+          <input id="customer" name="customer" type="text" placeholder="e.g. Acme Corp" required>
+        </div>
+        <div class="field">
+          <label for="site">Site name</label>
+          <input id="site" name="site" type="text" placeholder="e.g. Warehouse A" required>
+        </div>
+        <div class="field">
+          <label for="manufacturer">Camera manufacturer</label>
+          <select id="manufacturer" name="manufacturer">{options}</select>
+        </div>
+        <div class="field">
+          <label for="user">Camera username <span class="optional">(optional)</span></label>
+          <input id="user" name="user" type="text" placeholder="Admin or device user">
+        </div>
+        <div class="field">
+          <label for="pwd">Camera password <span class="optional">(optional)</span></label>
+          <input id="pwd" name="pwd" type="password" placeholder="••••••••">
+        </div>
+        <button type="submit" class="btn">Start setup</button>
+      </form>
+    </div>
+    <p class="footer">Connect this device to your cloud and cameras.</p>
+  </main>
+</body>
+</html>
+"""
 
 
-@app.post("/setup")
+def _success_html() -> str:
+    return """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup started — Ively SmartEye</title>
+  <style>""" + _styles() + """</style>
+</head>
+<body>
+  <main class="page">
+    <div class="logo">
+      <h1>Ively SmartEye™</h1>
+      <p>Edge device setup</p>
+    </div>
+    <div class="card success-card">
+      <div class="success-icon" aria-hidden="true">✓</div>
+      <h2>Provisioning started</h2>
+      <p>This device is registering and discovering cameras. Check the stream viewer in a minute.</p>
+    </div>
+    <p class="footer">Stream viewer: same address, path <strong>/view</strong> (after agent is running)</p>
+  </main>
+</body>
+</html>
+"""
+
+
+@app.get("/", response_class=HTMLResponse)
+def page():
+    return _setup_form_html()
+
+
+@app.post("/setup", response_class=HTMLResponse)
 def setup(
-    user: str = Form(...),
-    pwd: str = Form(...),
+    user: str = Form(""),
+    pwd: str = Form(""),
     manufacturer: str = Form("auto"),
     customer: str = Form(""),
     site: str = Form(""),
     cloud_url: str = Form("cloud.ively.ai"),
 ):
-    subprocess.Popen([
-        "python3",
-        "/opt/ively/edge/installer/provision_device.py",
-        user,
-        pwd,
-        manufacturer,
-        customer.strip() or "customer",
-        site.strip() or "site",
-        cloud_url.strip() or "cloud.ively.ai",
-    ])
-    return {"status": "Provisioning started"}
+    edge_dir = "/opt/ively/edge"
+    env = {**os.environ, "PYTHONPATH": edge_dir}
+    subprocess.Popen(
+        [
+            sys.executable,
+            os.path.join(edge_dir, "installer", "provision_device.py"),
+            user,
+            pwd,
+            manufacturer,
+            customer.strip() or "customer",
+            site.strip() or "site",
+            cloud_url.strip() or "cloud.ively.ai",
+        ],
+        cwd=edge_dir,
+        env=env,
+    )
+    return _success_html()
