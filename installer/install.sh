@@ -3,12 +3,28 @@
 # Run as root on the device (e.g. MINI PC). Do not run inside a venv.
 set -e
 
+# Bold cyan banner (no effect if not a TTY)
+_banner() {
+  local B='\033[1m'
+  local C='\033[36m'
+  local R='\033[0m'
+  local msg="$1"
+  local width=52
+  local line
+  line=$(printf '═%.0s' $(seq 1 "$width"))
+  echo ""
+  echo -e "${C}${B}  ╔${line}╗${R}"
+  printf "${C}${B}  ║  %-${width}s  ║${R}\n" "$msg"
+  echo -e "${C}${B}  ╚${line}╝${R}"
+  echo ""
+}
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo bash install.sh"
   exit 1
 fi
 
-echo "=== Ively SmartEye™ Edge Installer ==="
+_banner "Ively SmartEye™ Edge Installer"
 
 # Prerequisites
 apt update -y
@@ -61,4 +77,4 @@ DEVICE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo "1. Open http://edge.local or http://${DEVICE_IP}:2025"
 echo "2. Enter Cloud URL, Customer, Site, camera credentials, then Start Setup"
 echo "3. After provisioning, streams: http://edge.local:8080/view"
-echo "If connection fails: sudo journalctl -u ively-provision -n 40 --no-pager   then  sudo ufw allow 2025/tcp"
+echo "If connection fails: (1) sudo journalctl -u ively-provision -n 40 --no-pager  (2) sudo ufw allow 2025/tcp"

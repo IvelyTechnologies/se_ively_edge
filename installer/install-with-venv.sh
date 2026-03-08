@@ -3,12 +3,28 @@
 # Run as root on the device. Use this if you prefer venv over system-wide pip.
 set -e
 
+# Bold cyan banner (no effect if not a TTY)
+_banner() {
+  local B='\033[1m'
+  local C='\033[36m'
+  local R='\033[0m'
+  local msg="$1"
+  local width=52
+  local line
+  line=$(printf '═%.0s' $(seq 1 "$width"))
+  echo ""
+  echo -e "${C}${B}  ╔${line}╗${R}"
+  printf "${C}${B}  ║  %-${width}s  ║${R}\n" "$msg"
+  echo -e "${C}${B}  ╚${line}╝${R}"
+  echo ""
+}
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo bash install-with-venv.sh"
   exit 1
 fi
 
-echo "=== Ively SmartEye™ Edge Installer (with venv) ==="
+_banner "Ively SmartEye™ Edge Installer (with venv)"
 
 apt update -y
 apt install -y curl git python3 python3-pip python3-venv ffmpeg jq avahi-daemon
@@ -81,4 +97,4 @@ DEVICE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$DEVICE_IP" ] && DEVICE_IP="<device-ip>"
 echo "Open http://edge.local or http://${DEVICE_IP}:2025 to provision."
 echo "After setup, stream viewer: http://${DEVICE_IP}:8080/view"
-echo "If connection fails: sudo journalctl -u ively-provision -n 40 --no-pager   then  sudo ufw allow 2025/tcp"
+echo "If connection fails: (1) sudo journalctl -u ively-provision -n 40 --no-pager  (2) sudo ufw allow 2025/tcp"
