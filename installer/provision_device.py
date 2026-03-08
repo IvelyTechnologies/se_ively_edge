@@ -18,7 +18,7 @@ cloud_host = cloud_url.replace("https://", "").replace("http://", "").strip("/")
 
 print("Registering device...")
 
-resp = requests.post(f"https://{cloud_host}/register-edge", timeout=30).json()
+resp = requests.post(f"http://{cloud_host}:2018/register-edge", timeout=30).json()
 
 device_id = resp["device_id"]
 token = resp["token"]
