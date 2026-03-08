@@ -1,34 +1,72 @@
 # health server + stream viewer (for P2P verification after install)
 
+import json
+import os
 import re
+import subprocess
+import sys
 import threading
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 app = FastAPI()
 
 # MediaMTX WebRTC/HTTP port (from mediamtx.yml webrtcAddress :8889; HTTP often same or 8888)
 MEDIAMTX_PORT = 8889
+EDGE_DIR = Path("/opt/ively/edge")
+AGENT_DIR = Path("/opt/ively/agent")
+PROVISIONED_MARKER = Path("/opt/ively/.provisioned")
+MEDIAMTX_CONFIG = Path("/opt/ively/mediamtx/mediamtx.yml")
 
 
 def _stream_paths():
     """Read path names from mediamtx.yml so we can list them on the view page."""
-    path = Path("/opt/ively/mediamtx/mediamtx.yml")
-    if not path.exists():
+    if not MEDIAMTX_CONFIG.exists():
         return []
     try:
-        text = path.read_text(encoding="utf-8")
+        text = MEDIAMTX_CONFIG.read_text(encoding="utf-8")
         return re.findall(r"^\s+([a-zA-Z0-9_]+):\s*$", text, re.MULTILINE)
     except Exception:
         return []
 
 
+def _provisioned_info():
+    """
+    Read provisioned device info from disk. Returns dict with device_id, cloud_url, customer, site, cameras (list of path names), or None if not provisioned.
+    """
+    if not PROVISIONED_MARKER.exists() and not (AGENT_DIR / ".env").exists():
+        return None
+    info = {"device_id": "—", "cloud_url": "—", "customer": "—", "site": "—", "cameras": []}
+    try:
+        env_path = AGENT_DIR / ".env"
+        if env_path.exists():
+            for line in env_path.read_text(encoding="utf-8").strip().splitlines():
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    k, v = k.strip(), v.strip()
+                    if k == "DEVICE_ID":
+                        info["device_id"] = v
+                    elif k == "CLOUD_URL":
+                        info["cloud_url"] = v
+    except Exception:
+        pass
+    try:
+        site_path = AGENT_DIR / "site.json"
+        if site_path.exists():
+            data = json.loads(site_path.read_text(encoding="utf-8"))
+            info["customer"] = data.get("customer") or "—"
+            info["site"] = data.get("site") or "—"
+    except Exception:
+        pass
+    info["cameras"] = _stream_paths()
+    return info
+
+
 @app.get("/")
 def root():
     """Redirect to stream viewer so http://edge.local:8080 shows streams after install."""
-    from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/view", status_code=302)
 
 
@@ -36,6 +74,79 @@ def root():
 def health():
     """Liveness/readiness for load balancers and watchdog."""
     return {"status": "ok"}
+
+
+def _provisioned_page_html(info: dict) -> str:
+    """Render provisioned device table and camera list with Rediscover button."""
+    camera_rows = "".join(
+        f"<tr><td>{p}</td></tr>" for p in info["cameras"]
+    ) or "<tr><td>No cameras in config yet. Run Rediscover to scan.</td></tr>"
+    return f"""
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ively Edge – Provisioned device</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 2rem; max-width: 800px; }}
+    h2 {{ color: #1e293b; margin-top: 1.5rem; }}
+    h2:first-child {{ margin-top: 0; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border: 1px solid #cbd5e1; padding: 0.5rem 0.75rem; text-align: left; }}
+    th {{ background: #f1f5f9; font-weight: 600; }}
+    .btn {{ display: inline-block; margin-top: 1rem; padding: 0.5rem 1rem; background: #0ea5e9; color: #fff; text-decoration: none; border-radius: 6px; border: none; font-size: 1rem; cursor: pointer; }}
+    .btn:hover {{ background: #0284c7; }}
+    .nav {{ margin-bottom: 1.5rem; }}
+    .nav a {{ color: #0ea5e9; margin-right: 1rem; }}
+    .tip {{ color: #64748b; font-size: 0.9rem; margin-top: 1rem; }}
+  </style>
+</head>
+<body>
+  <div class="nav"><a href="/view">Streams</a> | <strong>Provisioned device</strong></div>
+  <h2>Provisioned device</h2>
+  <table>
+    <tr><th>Device ID</th><td>{info['device_id']}</td></tr>
+    <tr><th>Cloud URL</th><td>{info['cloud_url']}</td></tr>
+    <tr><th>Customer</th><td>{info['customer']}</td></tr>
+    <tr><th>Site</th><td>{info['site']}</td></tr>
+  </table>
+  <h2>Cameras (from MediaMTX config)</h2>
+  <table>
+    <thead><tr><th>Stream path</th></tr></thead>
+    <tbody>{camera_rows}</tbody>
+  </table>
+  <form method="post" action="/rediscover" style="margin-top: 1rem;">
+    <button type="submit" class="btn">Rediscover cameras</button>
+  </form>
+  <p class="tip">Added a new camera? Click <strong>Rediscover cameras</strong> to scan the network again and update the list. You do not need to run Provision setup again.</p>
+</body>
+</html>
+"""
+
+
+@app.get("/provisioned", response_class=HTMLResponse)
+def provisioned():
+    """Table view of provisioned device info and camera list; supports Rediscover."""
+    info = _provisioned_info()
+    if info is None:
+        return HTMLResponse(
+            content="<html><body><p>Device not provisioned yet. Run setup at port 2025.</p><a href='/view'>Streams</a></body></html>",
+            status_code=200,
+        )
+    return _provisioned_page_html(info)
+
+
+@app.post("/rediscover", response_class=HTMLResponse)
+def rediscover():
+    """Run camera discovery and regenerate mediamtx config; redirect to /provisioned."""
+    env = {**os.environ, "PYTHONPATH": str(EDGE_DIR)}
+    subprocess.Popen(
+        [sys.executable, "-m", "agent.camera.discover"],
+        cwd=str(EDGE_DIR),
+        env=env,
+    )
+    return RedirectResponse(url="/provisioned", status_code=303)
 
 
 @app.get("/view", response_class=HTMLResponse)
@@ -80,7 +191,7 @@ def view():
 </head>
 <body>
   <h2>Ively SmartEye™ – Live streams (P2P)</h2>
-  <p>Use these links to verify camera feeds after installation. Streams are served by MediaMTX (WebRTC).</p>
+  <p>Use these links to verify camera feeds after installation. Streams are served by MediaMTX (WebRTC). <a href="/provisioned">Provisioned device &amp; cameras</a></p>
   <table>
     <thead><tr><th>Stream</th><th>Action</th></tr></thead>
     <tbody>{rows}</tbody>

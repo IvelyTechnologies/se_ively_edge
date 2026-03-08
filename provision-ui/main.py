@@ -1,10 +1,18 @@
 from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
+import json
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 app = FastAPI()
+
+EDGE_DIR = Path("/opt/ively/edge")
+AGENT_DIR = Path("/opt/ively/agent")
+PROVISIONED_MARKER = Path("/opt/ively/.provisioned")
+MEDIAMTX_CONFIG = Path("/opt/ively/mediamtx/mediamtx.yml")
 
 MANUFACTURERS = [
     ("auto", "Auto-detect from camera"),
@@ -179,7 +187,97 @@ def _styles() -> str:
     }
     .success-card h2 { text-transform: none; font-size: 1.125rem; color: var(--text); margin-bottom: 0.5rem; }
     .success-card p { color: var(--text-muted); font-size: 0.9375rem; }
+    .table-wrap { overflow-x: auto; margin-top: 0.5rem; }
+    .table-wrap table { width: 100%; border-collapse: collapse; }
+    .table-wrap th, .table-wrap td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; }
+    .table-wrap th { color: var(--text-muted); font-weight: 600; }
+    .table-wrap tr:not(:first-child) th { width: 40%; }
     """
+
+
+def _provisioned_info():
+    """Return dict with device_id, cloud_url, customer, site, cameras; or None if not provisioned."""
+    if not PROVISIONED_MARKER.exists() and not (AGENT_DIR / ".env").exists():
+        return None
+    info = {"device_id": "—", "cloud_url": "—", "customer": "—", "site": "—", "cameras": []}
+    try:
+        env_path = AGENT_DIR / ".env"
+        if env_path.exists():
+            for line in env_path.read_text(encoding="utf-8").strip().splitlines():
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    k, v = k.strip(), v.strip()
+                    if k == "DEVICE_ID":
+                        info["device_id"] = v
+                    elif k == "CLOUD_URL":
+                        info["cloud_url"] = v
+    except Exception:
+        pass
+    try:
+        site_path = AGENT_DIR / "site.json"
+        if site_path.exists():
+            data = json.loads(site_path.read_text(encoding="utf-8"))
+            info["customer"] = data.get("customer") or "—"
+            info["site"] = data.get("site") or "—"
+    except Exception:
+        pass
+    if MEDIAMTX_CONFIG.exists():
+        try:
+            text = MEDIAMTX_CONFIG.read_text(encoding="utf-8")
+            info["cameras"] = re.findall(r"^\s+([a-zA-Z0-9_]+):\s*$", text, re.MULTILINE)
+        except Exception:
+            pass
+    return info
+
+
+def _provisioned_table_html(info: dict) -> str:
+    """Provisioned device table view (dark theme) with Rediscover button."""
+    camera_rows = "".join(f"<tr><td>{p}</td></tr>" for p in info["cameras"])
+    if not camera_rows:
+        camera_rows = "<tr><td>No cameras in config yet. Run Rediscover to scan.</td></tr>"
+    return f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ively SmartEye — Provisioned device</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="page" style="max-width: 520px;">
+    <div class="logo">
+      <h1>Ively SmartEye™</h1>
+      <p>Provisioned device</p>
+    </div>
+    <div class="card">
+      <h2>Device</h2>
+      <div class="table-wrap">
+        <table>
+          <tr><th>Device ID</th><td>{info['device_id']}</td></tr>
+          <tr><th>Cloud URL</th><td>{info['cloud_url']}</td></tr>
+          <tr><th>Customer</th><td>{info['customer']}</td></tr>
+          <tr><th>Site</th><td>{info['site']}</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="margin-top: 1rem;">
+      <h2>Cameras (MediaMTX)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Stream path</th></tr></thead>
+          <tbody>{camera_rows}</tbody>
+        </table>
+      </div>
+      <form method="post" action="/rediscover" style="margin-top: 1rem;">
+        <button type="submit" class="btn">Rediscover cameras</button>
+      </form>
+      <p class="footer" style="margin-top: 1rem;">Added a new camera? Click <strong>Rediscover cameras</strong> — no need to run setup again. Streams: port <strong>8080</strong>, path <strong>/view</strong>.</p>
+    </div>
+  </main>
+</body>
+</html>
+"""
 
 
 def _setup_form_html() -> str:
@@ -269,6 +367,9 @@ def _success_html() -> str:
 
 @app.get("/", response_class=HTMLResponse)
 def page():
+    info = _provisioned_info()
+    if info is not None:
+        return _provisioned_table_html(info)
     return _setup_form_html()
 
 
@@ -298,3 +399,16 @@ def setup(
         env=env,
     )
     return _success_html()
+
+
+@app.post("/rediscover", response_class=HTMLResponse)
+def rediscover():
+    """Run camera discovery and regenerate mediamtx config; redirect to /."""
+    edge_dir = "/opt/ively/edge"
+    env = {**os.environ, "PYTHONPATH": edge_dir}
+    subprocess.Popen(
+        [sys.executable, "-m", "agent.camera.discover"],
+        cwd=edge_dir,
+        env=env,
+    )
+    return RedirectResponse(url="/", status_code=303)
