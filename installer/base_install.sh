@@ -55,6 +55,16 @@ else
 fi
 rm -f "$MEDIAMTX_TGZ"
 
+# Overwrite default mediamtx.yml so no placeholder hostnames (e.g. my_camera) are used
+cat > /opt/ively/mediamtx/mediamtx.yml << 'MTXEOF'
+webrtc: yes
+webrtcAddress: :8889
+webrtcICEServers:
+  - urls: [stun:stun.l.google.com:19302]
+sourceOnDemand: no
+paths:
+MTXEOF
+
 cp services/*.service /etc/systemd/system/
 
 systemctl daemon-reload
