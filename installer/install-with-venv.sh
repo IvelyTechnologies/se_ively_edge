@@ -43,6 +43,9 @@ WorkingDirectory=/opt/ively/edge/provision-ui
 Environment="PATH=/opt/ively/venv/bin:/usr/local/bin:/usr/bin"
 ExecStart=$PYVENV -m uvicorn main:app --host 0.0.0.0 --port 8080
 Restart=always
+
+[Install]
+WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 

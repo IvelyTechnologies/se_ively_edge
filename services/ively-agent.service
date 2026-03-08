@@ -6,3 +6,6 @@ After=network.target
 WorkingDirectory=/opt/ively/edge
 ExecStart=/usr/bin/python3 -m agent.main
 Restart=always
+
+[Install]
+WantedBy=multi-user.target

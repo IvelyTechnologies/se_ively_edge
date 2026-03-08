@@ -5,3 +5,6 @@ After=network.target
 [Service]
 ExecStart=/opt/ively/mediamtx/mediamtx /opt/ively/mediamtx/mediamtx.yml
 Restart=always
+
+[Install]
+WantedBy=multi-user.target
