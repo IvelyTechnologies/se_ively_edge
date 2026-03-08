@@ -2,17 +2,24 @@
 
 mkdir -p /recordings
 
-# Download MediaMTX (retry on failure; avoid incomplete/corrupt downloads)
+# Download MediaMTX (retry on failure; GitHub redirects require curl -L or wget --redirect)
+MEDIAMTX_URL="https://github.com/bluenviron/mediamtx/releases/latest/download/mediamtx_linux_amd64.tar.gz"
 MEDIAMTX_TGZ="/tmp/mediamtx.tar.gz"
+download_ok=
 for i in 1 2 3; do
-  wget -qO "$MEDIAMTX_TGZ" \
-    "https://github.com/bluenviron/mediamtx/releases/latest/download/mediamtx_linux_amd64.tar.gz" \
-    && [ -s "$MEDIAMTX_TGZ" ] && break
-  echo "Download attempt $i failed or empty, retrying..."
-  sleep 2
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL -o "$MEDIAMTX_TGZ" "$MEDIAMTX_URL" 2>/dev/null && [ -s "$MEDIAMTX_TGZ" ] && download_ok=1
+  else
+    wget -q -O "$MEDIAMTX_TGZ" "$MEDIAMTX_URL" 2>/dev/null && [ -s "$MEDIAMTX_TGZ" ] && download_ok=1
+  fi
+  [ -n "$download_ok" ] && break
+  echo "Download attempt $i failed or empty, retrying in 3s..."
+  sleep 3
 done
 if ! [ -s "$MEDIAMTX_TGZ" ]; then
-  echo "ERROR: Failed to download MediaMTX or file is empty."
+  echo "ERROR: Failed to download MediaMTX (file missing or empty)."
+  echo "  Check: 1) Device can reach github.com  2) No proxy/firewall blocking"
+  echo "  Manual: curl -fL -o $MEDIAMTX_TGZ $MEDIAMTX_URL"
   exit 1
 fi
 

@@ -11,7 +11,7 @@ fi
 echo "=== Ively SmartEye™ Edge Installer (with venv) ==="
 
 apt update -y
-apt install -y git python3 python3-pip python3-venv ffmpeg jq avahi-daemon
+apt install -y curl git python3 python3-pip python3-venv ffmpeg jq avahi-daemon
 
 mkdir -p /opt/ively
 
