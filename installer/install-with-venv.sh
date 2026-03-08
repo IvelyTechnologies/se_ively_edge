@@ -56,4 +56,7 @@ systemctl start ively-provision
 echo ""
 echo "=== Install complete (venv) ==="
 echo "Python: /opt/ively/venv/bin/python3"
-echo "Open http://edge.local or http://<device-ip>:8080 to provision."
+DEVICE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -z "$DEVICE_IP" ] && DEVICE_IP=$(ip -4 route get 1 2>/dev/null | awk '{print $7; exit}')
+[ -z "$DEVICE_IP" ] && DEVICE_IP="<device-ip>"
+echo "Open http://edge.local or http://${DEVICE_IP}:8080 to provision."

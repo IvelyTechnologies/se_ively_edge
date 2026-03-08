@@ -38,6 +38,9 @@ systemctl start ively-provision
 
 echo ""
 echo "=== Install complete ==="
-echo "1. Open http://edge.local or http://<this-device-ip>:8080"
+DEVICE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -z "$DEVICE_IP" ] && DEVICE_IP=$(ip -4 route get 1 2>/dev/null | awk '{print $7; exit}')
+[ -z "$DEVICE_IP" ] && DEVICE_IP="<this-device-ip>"
+echo "1. Open http://edge.local or http://${DEVICE_IP}:8080"
 echo "2. Enter Cloud URL, Customer, Site, camera credentials, then Start Setup"
 echo "3. After provisioning, streams: http://edge.local:8080/view"
