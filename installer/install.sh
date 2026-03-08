@@ -36,11 +36,23 @@ systemctl daemon-reload
 systemctl enable ively-provision
 systemctl start ively-provision
 
+# Allow port 2025 so the provision UI is reachable from other machines
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow 2025/tcp 2>/dev/null || true
+fi
+
+# Give uvicorn a moment to bind
+sleep 3
+if ! ss -tlnp 2>/dev/null | grep -q ':2025 '; then
+  echo "WARNING: Port 2025 may not be listening. Check: systemctl status ively-provision"
+fi
+
 echo ""
 echo "=== Install complete ==="
 DEVICE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$DEVICE_IP" ] && DEVICE_IP=$(ip -4 route get 1 2>/dev/null | awk '{print $7; exit}')
 [ -z "$DEVICE_IP" ] && DEVICE_IP="<this-device-ip>"
-echo "1. Open http://edge.local or http://${DEVICE_IP}:8080"
+echo "1. Open http://edge.local or http://${DEVICE_IP}:2025"
 echo "2. Enter Cloud URL, Customer, Site, camera credentials, then Start Setup"
-echo "3. After provisioning, streams: http://edge.local:8080/view"
+echo "3. After provisioning, streams: http://edge.local:2025/view"
+echo "If connection fails: sudo systemctl status ively-provision  &&  sudo ufw allow 2025/tcp"
