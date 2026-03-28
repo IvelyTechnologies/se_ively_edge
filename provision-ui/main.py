@@ -328,11 +328,11 @@ def _setup_form_html() -> str:
           <select id="manufacturer" name="manufacturer">{options}</select>
         </div>
         <div class="field">
-          <label for="user">Camera username <span class="optional">(optional)</span></label>
+          <label for="user">NDVR username <span class="optional">(optional)</span></label>
           <input id="user" name="user" type="text" placeholder="Admin or device user">
         </div>
         <div class="field">
-          <label for="pwd">Camera password <span class="optional">(optional)</span></label>
+          <label for="pwd">NDVR password <span class="optional">(optional)</span></label>
           <input id="pwd" name="pwd" type="password" placeholder="••••••••">
         </div>
         <button type="submit" class="btn">Start setup</button>

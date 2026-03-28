@@ -76,15 +76,12 @@ else
 fi
 rm -f "$MEDIAMTX_TGZ"
 
-# Overwrite default mediamtx.yml so no placeholder hostnames (e.g. my_camera) are used
-cat > /opt/ively/mediamtx/mediamtx.yml << 'MTXEOF'
-webrtc: yes
-webrtcAddress: :8889
-webrtcICEServers:
-  - urls: [stun:stun.l.google.com:19302]
-sourceOnDemand: no
-paths:
-MTXEOF
+# Overwrite default mediamtx.yml using mediamtx_writer so it defines the base template
+if [ -x "/opt/ively/venv/bin/python3" ]; then
+  PYTHONPATH=/opt/ively/edge /opt/ively/venv/bin/python3 -c "from agent.camera.mediamtx_writer import generate; generate([])"
+else
+  PYTHONPATH=/opt/ively/edge python3 -c "from agent.camera.mediamtx_writer import generate; generate([])"
+fi
 
 cp services/*.service /etc/systemd/system/
 
