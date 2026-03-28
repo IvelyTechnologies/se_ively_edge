@@ -45,6 +45,7 @@ End-to-end flow from preparing the device to a working, provisioned edge with st
 | 3.3 | Fill the form: | |
 | | **Cloud URL** — Your cloud hostname or IP (e.g. `cloud.ively.ai` or `192.168.1.10`). No URL validation; IP is fine. | |
 | | **Customer name**, **Site name** — e.g. "Acme Corp", "Warehouse A". | |
+| | **Customer ID**, **Site ID** — Optional numeric IDs to associate with cloud database. | |
 | | **Camera manufacturer** — Select or leave "Auto-detect from camera". | |
 | | **Camera username / Camera password** — If your cameras need login. | |
 | 3.4 | Click **Start setup**. | Response: "Provisioning started" (success page). |
@@ -128,6 +129,7 @@ sudo bash installer/install.sh
 2. Fill in:
    - **Cloud URL** — hostname or IP (e.g. `cloud.ively.ai` or `192.168.1.10`)
    - **Customer name**, **Site name**
+   - **Customer ID**, **Site ID** (optional)
    - **Camera manufacturer** (or Auto-detect)
    - **Camera username** / **Camera password** (if required by your cameras)
 3. Click **Start Setup**.  
