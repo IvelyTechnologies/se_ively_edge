@@ -2,6 +2,27 @@
 
 mkdir -p /recordings
 
+# ---------------------------------------------------------------------------
+# Install WireGuard (secure VPN tunnel to cloud)
+# ---------------------------------------------------------------------------
+echo "Installing WireGuard..."
+if apt install -y wireguard wireguard-tools 2>/dev/null; then
+  echo "WireGuard installed successfully"
+else
+  echo "WARNING: WireGuard installation failed — VPN tunnel will not be available."
+  echo "  You can install it later: sudo apt install -y wireguard wireguard-tools"
+fi
+
+# Enable IP forwarding (required for VPN)
+if ! grep -q "^net.ipv4.ip_forward=1" /etc/sysctl.conf 2>/dev/null; then
+  echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+  sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
+fi
+
+# Create WireGuard keys directory
+mkdir -p /opt/ively/agent/wg_keys
+chmod 700 /opt/ively/agent/wg_keys
+
 # Download MediaMTX — resolve latest version (assets are named mediamtx_vX.Y.Z_linux_amd64.tar.gz)
 MEDIAMTX_TGZ="/tmp/mediamtx.tar.gz"
 MEDIAMTX_TAG=""

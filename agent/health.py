@@ -20,6 +20,13 @@ AGENT_DIR = Path("/opt/ively/agent")
 PROVISIONED_MARKER = Path("/opt/ively/.provisioned")
 MEDIAMTX_CONFIG = Path("/opt/ively/mediamtx/mediamtx.yml")
 
+# WireGuard status (optional)
+try:
+    from agent.wireguard.client import get_status as wg_get_status, load_state as wg_load_state
+    HAS_WIREGUARD = True
+except ImportError:
+    HAS_WIREGUARD = False
+
 
 def _stream_paths():
     """Read path names from mediamtx.yml so we can list them on the view page."""
@@ -30,6 +37,19 @@ def _stream_paths():
         return re.findall(r"^\s+([a-zA-Z0-9_]+):\s*$", text, re.MULTILINE)
     except Exception:
         return []
+
+
+def _vpn_status_dict() -> dict | None:
+    """Return VPN status dict or None if WireGuard not available."""
+    if not HAS_WIREGUARD:
+        return None
+    state = wg_load_state()
+    if state is None:
+        return None
+    try:
+        return wg_get_status()
+    except Exception:
+        return {"interface_up": False, "vpn_ip": state.get("vpn_ip")}
 
 
 def _provisioned_info():
@@ -73,14 +93,30 @@ def root():
 @app.get("/health")
 def health():
     """Liveness/readiness for load balancers and watchdog."""
-    return {"status": "ok"}
+    result = {"status": "ok"}
+    vpn = _vpn_status_dict()
+    if vpn is not None:
+        result["vpn"] = "connected" if vpn.get("interface_up") else "disconnected"
+        result["vpn_ip"] = vpn.get("vpn_ip")
+    return result
 
 
 def _provisioned_page_html(info: dict) -> str:
-    """Render provisioned device table and camera list with Rediscover button."""
+    """Render provisioned device table and camera list with Rediscover button and VPN status."""
     camera_rows = "".join(
         f"<tr><td>{p}</td></tr>" for p in info["cameras"]
     ) or "<tr><td>No cameras in config yet. Run Rediscover to scan.</td></tr>"
+
+    # VPN status row
+    vpn_row = ""
+    vpn = _vpn_status_dict()
+    if vpn is not None:
+        vpn_status = "🟢 Connected" if vpn.get("interface_up") else "🔴 Disconnected"
+        vpn_ip = vpn.get("vpn_ip") or "—"
+        vpn_row = f"""
+    <tr><th>VPN Status</th><td>{vpn_status}</td></tr>
+    <tr><th>VPN IP</th><td>{vpn_ip}</td></tr>"""
+
     return f"""
 <!DOCTYPE html>
 <html>
@@ -109,7 +145,7 @@ def _provisioned_page_html(info: dict) -> str:
     <tr><th>Device ID</th><td>{info['device_id']}</td></tr>
     <tr><th>Cloud URL</th><td>{info['cloud_url']}</td></tr>
     <tr><th>Customer</th><td>{info['customer']}</td></tr>
-    <tr><th>Site</th><td>{info['site']}</td></tr>
+    <tr><th>Site</th><td>{info['site']}</td></tr>{vpn_row}
   </table>
   <h2>Cameras (from MediaMTX config)</h2>
   <table>
@@ -135,6 +171,15 @@ def provisioned():
             status_code=200,
         )
     return _provisioned_page_html(info)
+
+
+@app.get("/vpn-status")
+def vpn_status():
+    """JSON endpoint for WireGuard tunnel status."""
+    vpn = _vpn_status_dict()
+    if vpn is None:
+        return {"vpn": "not_available"}
+    return vpn
 
 
 @app.post("/rediscover", response_class=HTMLResponse)

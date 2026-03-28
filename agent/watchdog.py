@@ -1,4 +1,4 @@
-# self-healing watchdog — service health, stream, disk, internet, re-discovery
+# self-healing watchdog — service health, stream, disk, internet, VPN, re-discovery
 
 import os
 import subprocess
@@ -32,6 +32,18 @@ try:
 except ImportError:
     run_discovery = None
 
+# WireGuard tunnel health
+try:
+    from agent.wireguard.client import (
+        tunnel_healthy as wg_tunnel_healthy,
+        restart_tunnel as wg_restart_tunnel,
+        load_state as wg_load_state,
+        is_interface_up as wg_is_up,
+    )
+    HAS_WIREGUARD = True
+except ImportError:
+    HAS_WIREGUARD = False
+
 # Internet check (uses CLOUD_URL from provisioning)
 try:
     import requests
@@ -61,6 +73,26 @@ def restart(name: str) -> None:
     subprocess.run(["systemctl", "restart", name], timeout=15, check=False)
 
 
+def _check_wireguard() -> None:
+    """Monitor WireGuard tunnel health and restart if unhealthy."""
+    if not HAS_WIREGUARD:
+        return
+
+    # Only check if WireGuard was provisioned (state file exists)
+    state = wg_load_state()
+    if state is None:
+        return
+
+    if not wg_is_up():
+        print("WireGuard interface down — restarting tunnel")
+        wg_restart_tunnel()
+        return
+
+    if not wg_tunnel_healthy(max_handshake_age_sec=300):
+        print("WireGuard tunnel unhealthy (stale handshake) — restarting")
+        wg_restart_tunnel()
+
+
 def watchdog_loop(
     interval_sec: int = 30,
     discovery_interval_sec: int = 600,
@@ -68,7 +100,7 @@ def watchdog_loop(
     disk_threshold: float = 85.0,
 ) -> None:
     """
-    Main loop: check services, CPU, stream, disk, internet; run re-discovery periodically.
+    Main loop: check services, CPU, stream, disk, internet, VPN; run re-discovery periodically.
     """
     last_internet_ok = True
     last_discovery_time = 0.0
@@ -101,9 +133,16 @@ def watchdog_loop(
             if not last_internet_ok and internet_ok:
                 print("Internet back — restarting ively-agent")
                 restart("ively-agent")
+                # Also restart WireGuard tunnel after internet recovery
+                if HAS_WIREGUARD and wg_load_state() is not None:
+                    print("Internet back — restarting WireGuard tunnel")
+                    wg_restart_tunnel()
             last_internet_ok = internet_ok
 
-            # 6) Periodic camera re-discovery (e.g. camera unplugged then reappears)
+            # 6) WireGuard tunnel health
+            _check_wireguard()
+
+            # 7) Periodic camera re-discovery (e.g. camera unplugged then reappears)
             now = time.monotonic()
             if run_discovery is not None and (now - last_discovery_time) >= discovery_interval_sec:
                 last_discovery_time = now

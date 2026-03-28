@@ -1,4 +1,4 @@
-# websocket client — cloud connection + command dispatch + heartbeat
+# websocket client — cloud connection + command dispatch + heartbeat (includes VPN status)
 
 import asyncio
 import json
@@ -22,13 +22,43 @@ try:
 except ImportError:
     handle_command = None
 
+# WireGuard status (optional)
+try:
+    from agent.wireguard.client import get_status as wg_get_status, load_state as wg_load_state
+    HAS_WIREGUARD = True
+except ImportError:
+    HAS_WIREGUARD = False
+
+
+def _vpn_info() -> dict:
+    """Collect VPN status for heartbeat."""
+    if not HAS_WIREGUARD:
+        return {"vpn": "not_installed"}
+    state = wg_load_state()
+    if state is None:
+        return {"vpn": "not_configured"}
+    try:
+        status = wg_get_status()
+        return {
+            "vpn": "connected" if status.get("interface_up") else "disconnected",
+            "vpn_ip": status.get("vpn_ip") or state.get("vpn_ip"),
+        }
+    except Exception:
+        return {"vpn": "error"}
+
 
 async def _heartbeat(ws):
-    """Send periodic heartbeat so cloud can read device version and status."""
+    """Send periodic heartbeat so cloud can read device version, VPN status, and overall status."""
     while True:
         try:
             await asyncio.sleep(60)
-            await ws.send(json.dumps({"type": "heartbeat", "version": EDGE_VERSION}))
+            heartbeat = {
+                "type": "heartbeat",
+                "version": EDGE_VERSION,
+            }
+            # Include VPN info
+            heartbeat.update(_vpn_info())
+            await ws.send(json.dumps(heartbeat))
         except Exception:
             break
 
