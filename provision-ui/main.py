@@ -312,8 +312,16 @@ def _setup_form_html() -> str:
           <input id="customer" name="customer" type="text" placeholder="e.g. Acme Corp" required>
         </div>
         <div class="field">
+          <label for="customer_id">Customer ID <span class="optional">(optional)</span></label>
+          <input id="customer_id" name="customer_id" type="number" placeholder="e.g. 123">
+        </div>
+        <div class="field">
           <label for="site">Site name</label>
           <input id="site" name="site" type="text" placeholder="e.g. Warehouse A" required>
+        </div>
+        <div class="field">
+          <label for="site_id">Site ID <span class="optional">(optional)</span></label>
+          <input id="site_id" name="site_id" type="number" placeholder="e.g. 456">
         </div>
         <div class="field">
           <label for="manufacturer">Camera manufacturer</label>
@@ -381,6 +389,8 @@ def setup(
     customer: str = Form(""),
     site: str = Form(""),
     cloud_url: str = Form("cloud.ively.ai"),
+    customer_id: str = Form(""),
+    site_id: str = Form(""),
 ):
     edge_dir = "/opt/ively/edge"
     env = {**os.environ, "PYTHONPATH": edge_dir}
@@ -394,6 +404,8 @@ def setup(
             customer.strip() or "customer",
             site.strip() or "site",
             cloud_url.strip() or "cloud.ively.ai",
+            customer_id.strip(),
+            site_id.strip(),
         ],
         cwd=edge_dir,
         env=env,

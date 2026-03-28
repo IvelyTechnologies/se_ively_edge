@@ -28,7 +28,7 @@ def scan():
     passwd = passwd or ""
     cams = []
     for i in range(2, 254):
-        ip = f"192.168.1.{i}"
+        ip = f"192.168.0.{i}"
         try:
             cam = ONVIFCamera(ip, 80, user, passwd)
             info = cam.devicemgmt.GetDeviceInformation()

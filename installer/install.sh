@@ -56,10 +56,11 @@ systemctl daemon-reload
 systemctl enable ively-provision
 systemctl start ively-provision
 
-# Allow ports: 2025 = provision UI, 8080 = agent/stream viewer
+# Allow ports: 2025 = provision UI, 8080 = agent/stream viewer, 51820 = WireGuard VPN
 if command -v ufw >/dev/null 2>&1; then
   ufw allow 2025/tcp 2>/dev/null || true
   ufw allow 8080/tcp 2>/dev/null || true
+  ufw allow 51820/udp 2>/dev/null || true
 fi
 
 # Give uvicorn time to bind; detect crash loop
