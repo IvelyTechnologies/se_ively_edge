@@ -79,7 +79,7 @@ def _styles() -> str:
       margin-bottom: 1.75rem;
     }
     .logo h1 {
-      font-size: clamp(1.25rem, 4vw, 1.5rem);
+      font-size: clamp(1.25rem, 4vw, 3.5rem);
       font-weight: 700;
       letter-spacing: -0.02em;
       color: var(--text);
