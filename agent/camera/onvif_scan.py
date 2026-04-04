@@ -32,40 +32,48 @@ def scan(target_ip=None, user=None, passwd=None):
     ips_to_scan = [target_ip] if target_ip else [f"192.168.0.{i}" for i in range(2, 254)]
     
     import socket
-    def fast_check(ip):
-        # We check common HTTP/ONVIF ports with a short timeout to prevent 30s hangs
-        for port in [80, 8080, 8899, 554]:
+    def get_open_ports(ip):
+        open_p = []
+        for port in [80, 8899, 8080, 2020, 554]:
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.settimeout(0.5)
                     if s.connect_ex((ip, port)) == 0:
-                        return True
+                        open_p.append(port)
             except Exception:
                 pass
-        return False
+        return open_p
 
     for ip in ips_to_scan:
-        if not fast_check(ip):
+        open_ports = get_open_ports(ip)
+        if not open_ports:
             if target_ip:
                 print(f"Network device at {ip} did not respond on camera ports.")
             continue
             
-        try:
-            cam = ONVIFCamera(ip, 80, user, passwd)
-            info = cam.devicemgmt.GetDeviceInformation()
-            
-            num_channels = 1
+        success = False
+        for port in open_ports:
             try:
-                media = cam.create_media_service()
-                video_sources = media.GetVideoSources()
-                if video_sources and len(video_sources) > 0:
-                    num_channels = len(video_sources)
-            except Exception:
+                cam = ONVIFCamera(ip, port, user, passwd)
+                info = cam.devicemgmt.GetDeviceInformation()
+                
+                num_channels = 1
+                try:
+                    media = cam.create_media_service()
+                    video_sources = media.GetVideoSources()
+                    if video_sources and len(video_sources) > 0:
+                        num_channels = len(video_sources)
+                except Exception:
+                    pass
+                    
+                cams.append({"ip": ip, "model": info.Model, "channels": num_channels})
+                print(f"Found {ip} via port {port} with {num_channels} channels")
+                success = True
+                break
+            except Exception as e:
+                # Expect false-positives (like web interfaces throwing WSDL/HTTPS parse errors)
                 pass
                 
-            cams.append({"ip": ip, "model": info.Model, "channels": num_channels})
-            print(f"Found {ip} with {num_channels} channels")
-        except Exception as e:
-            print(f"ONVIF error querying {ip}: {e}")
-            pass
+        if not success and target_ip:
+            print(f"ONVIF query failed on {ip}. Ensure ONVIF is enabled in the device settings.")
     return cams
