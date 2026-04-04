@@ -10,6 +10,11 @@ from pathlib import Path
 app = FastAPI()
 
 EDGE_DIR = Path("/opt/ively/edge")
+if str(EDGE_DIR) not in sys.path:
+    sys.path.insert(0, str(EDGE_DIR))
+
+import agent.camera.onvif_scan as onvif_scan
+
 AGENT_DIR = Path("/opt/ively/agent")
 PROVISIONED_MARKER = Path("/opt/ively/.provisioned")
 MEDIAMTX_CONFIG = Path("/opt/ively/mediamtx/mediamtx.yml")
@@ -465,12 +470,6 @@ def setup_step1_discover(
     customer_id: str = Form(""),
     site_id: str = Form(""),
 ):
-    edge_dir = "/opt/ively/edge"
-    if edge_dir not in sys.path:
-        sys.path.insert(0, edge_dir)
-        
-    import agent.camera.onvif_scan as onvif_scan
-    
     # Run the fast parallel discovery
     cams = onvif_scan.scan(target_ip=ndvr_ip.strip() or None, user=user.strip(), passwd=pwd.strip())
     
