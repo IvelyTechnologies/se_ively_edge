@@ -179,6 +179,7 @@ def _rtsp_urls(
     username: str,
     password: str,
     manufacturer_override: Optional[str] = None,
+    channel: str = "1",
 ) -> tuple[str, str]:
     """Return (hd_url, low_url) with credentials embedded."""
     if manufacturer_override and manufacturer_override in RTSP_FORMATS:
@@ -193,7 +194,7 @@ def _rtsp_urls(
         "username": safe_user,
         "password": safe_pass,
         "ip": ip,
-        "channel": "1",
+        "channel": channel,
         "profile": "2",
     }
     try:
@@ -245,26 +246,29 @@ def generate(
 webrtcAddress: :8889
 
 # STUN server (FREE)
-webrtcICEServers:
-  - urls: [stun:stun.l.google.com:19302]
-
-sourceOnDemand: no
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
 
 paths:
 """
-    for i, c in enumerate(cams):
+    camera_index = 1
+    for c in cams:
         ip = c["ip"]
         model = c.get("model", "")
-        hd_url, low_url = _rtsp_urls(
-            ip, model, username, password, manufacturer_override
-        )
-        cfg += f"""
-  {path_label}cam{i + 1}_low:
+        channels_count = c.get("channels", 1)
+        
+        for ch in range(1, channels_count + 1):
+            hd_url, low_url = _rtsp_urls(
+                ip, model, username, password, manufacturer_override, channel=str(ch)
+            )
+            cfg += f"""
+  {path_label}cam{camera_index}_low:
     source: {low_url}
 
-  {path_label}cam{i + 1}_hd:
+  {path_label}cam{camera_index}_hd:
     source: {hd_url}
 """
+            camera_index += 1
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     with open(config_path, "w", encoding="utf-8") as f:
         f.write(cfg)

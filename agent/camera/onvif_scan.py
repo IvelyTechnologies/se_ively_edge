@@ -32,8 +32,18 @@ def scan():
         try:
             cam = ONVIFCamera(ip, 80, user, passwd)
             info = cam.devicemgmt.GetDeviceInformation()
-            cams.append({"ip": ip, "model": info.Model})
-            print("Found", ip)
+            
+            num_channels = 1
+            try:
+                media = cam.create_media_service()
+                video_sources = media.GetVideoSources()
+                if video_sources and len(video_sources) > 0:
+                    num_channels = len(video_sources)
+            except Exception:
+                pass
+                
+            cams.append({"ip": ip, "model": info.Model, "channels": num_channels})
+            print(f"Found {ip} with {num_channels} channels")
         except Exception:
             pass
     return cams
