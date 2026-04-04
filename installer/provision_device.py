@@ -52,7 +52,7 @@ if site_id:
         pass
 
 resp = requests.post(
-    f"http://{cloud_host}:2018/register-edge",
+    f"http://{cloud_host}/register-edge",
     json=register_payload,
     timeout=30,
 ).json()

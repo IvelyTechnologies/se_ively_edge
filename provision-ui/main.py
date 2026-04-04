@@ -272,8 +272,10 @@ def _provisioned_table_html(info: dict) -> str:
       <form method="post" action="/rediscover" style="margin-top: 1rem;">
         <button type="submit" class="btn" style="margin-top: 0;">Rediscover cameras</button>
       </form>
-      <a href="/setup" class="btn" style="display: block; text-align: center; text-decoration: none; background: transparent; border: 1px solid var(--border); margin-top: 0.75rem; color: var(--text);">Re-setup device</a>
-      <p class="footer" style="margin-top: 1rem;">Added a new camera? Click <strong>Rediscover cameras</strong>. To change Cloud URL, click <strong>Re-setup device</strong>. Streams: port <strong>8080</strong>, path <strong>/view</strong>.</p>
+      <form method="post" action="/reset" style="margin-top: 0.75rem;" onsubmit="return confirm('This will securely wipe all device configurations, camera targets, and credentials, requiring a completely fresh setup. Continue?');">
+        <button type="submit" class="btn" style="background: transparent; border: 1px solid #7f1d1d; margin-top: 0; color: #fca5a5;">Wipe && Re-setup</button>
+      </form>
+      <p class="footer" style="margin-top: 1rem;">Added a new camera? Click <strong>Rediscover cameras</strong>. To fully wipe the device, click <strong>Wipe && Re-setup</strong>. Streams: port <strong>8080</strong>, path <strong>/view</strong>.</p>
     </div>
   </main>
 </body>
@@ -431,6 +433,38 @@ def rediscover():
         env=env,
     )
     return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/reset", response_class=HTMLResponse)
+def reset_device():
+    """Fully wipe the edge device configuration files and restart states."""
+    # Stop background tasks to release any active file locks
+    subprocess.run(["systemctl", "stop", "ively-agent"], check=False)
+    subprocess.run(["systemctl", "stop", "mediamtx"], check=False)
+
+    wipe_targets = [
+        PROVISIONED_MARKER,
+        AGENT_DIR / ".env",
+        AGENT_DIR / "site.json",
+        AGENT_DIR / "camera.vault",
+        AGENT_DIR / "camera.manufacturer",
+        MEDIAMTX_CONFIG  # Critical: Deleting this clears "old" camera discoveries
+    ]
+
+    for p in wipe_targets:
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception as e:
+            print(f"Cleanup error for {p}: {e}")
+
+    # Optionally re-enable provision GUI as active
+    subprocess.run(["systemctl", "enable", "ively-provision"], check=False)
+
+    resp = RedirectResponse(url="/", status_code=303)
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
+
 
 
 
