@@ -303,12 +303,16 @@ def _setup_form_html() -> str:
       <p>Edge device setup</p>
     </div>
     <div class="card">
-      <h2>Provision device</h2>
+      <h2>Provision & Discover</h2>
       <form method="post" action="/setup">
         <div class="field">
           <label for="cloud_url">Cloud URL</label>
           <!-- Accept hostname or IP; no URL format validation -->
           <input id="cloud_url" name="cloud_url" type="text" placeholder="cloud.ively.ai or IP" value="cloud.ively.ai" required autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="ndvr_ip">NDVR / Camera IP <span class="optional">(optional for full sweep)</span></label>
+          <input id="ndvr_ip" name="ndvr_ip" type="text" placeholder="e.g. 192.168.0.104">
         </div>
         <div class="field">
           <label for="customer">Customer name</label>
@@ -338,10 +342,10 @@ def _setup_form_html() -> str:
           <label for="pwd">NDVR password <span class="optional">(optional)</span></label>
           <input id="pwd" name="pwd" type="password" placeholder="••••••••">
         </div>
-        <button type="submit" class="btn">Start setup</button>
+        <button type="submit" class="btn">Discover Cameras</button>
       </form>
     </div>
-    <p class="footer">Connect this device to your cloud and cameras.</p>
+    <p class="footer">Next, you'll select which cameras to process for AI.</p>
   </main>
 </body>
 </html>
@@ -376,6 +380,65 @@ def _success_html() -> str:
 """
 
 
+def _camera_selection_html(cams, user, pwd, manufacturer, customer, site, cloud_url, customer_id, site_id) -> str:
+    cams_json = json.dumps(cams).replace('"', '&quot;')
+    checkboxes = ""
+    for c in cams:
+        ip = c["ip"]
+        channels_count = c.get("channels", 1)
+        for ch in range(1, channels_count + 1):
+            cam_val = f"{ip}:{ch}"
+            checkboxes += f"""
+            <label style="display: block; margin-bottom: 0.5rem; background: var(--bg); padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border);">
+                <input type="checkbox" name="selected_cams" value="{cam_val}" checked style="width: auto; margin-right: 0.5rem; display: inline-block; cursor: pointer;">
+                {ip} — Channel {ch}
+            </label>
+            """
+            
+    if not checkboxes:
+        checkboxes = "<p style='color: #fca5a5;'>No ONVIF streams discovered. Hit back, clear the NDVR IP field for a full network sweep, or check your credentials.</p>"
+        
+    return f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ively SmartEye — Camera Selection</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="page">
+    <div class="logo">
+      <h1>Ively SmartEye™</h1>
+      <p>Select AI Targets</p>
+    </div>
+    <div class="card">
+        <h2>Detected Cameras</h2>
+        <form method="post" action="/finalize_setup">
+            <input type="hidden" name="user" value="{user}">
+            <input type="hidden" name="pwd" value="{pwd}">
+            <input type="hidden" name="manufacturer" value="{manufacturer}">
+            <input type="hidden" name="customer" value="{customer}">
+            <input type="hidden" name="site" value="{site}">
+            <input type="hidden" name="cloud_url" value="{cloud_url}">
+            <input type="hidden" name="customer_id" value="{customer_id}">
+            <input type="hidden" name="site_id" value="{site_id}">
+            <input type="hidden" name="cams_json" value="{cams_json}">
+            
+            <div class="field">
+              {checkboxes}
+            </div>
+            
+            <button type="submit" class="btn" {'disabled' if not cams else ''}>Confirm & Provision Device</button>
+        </form>
+    </div>
+  </main>
+</body>
+</html>
+"""
+
+
 @app.get("/", response_class=HTMLResponse)
 def page():
     info = _provisioned_info()
@@ -391,7 +454,8 @@ def show_setup():
 
 
 @app.post("/setup", response_class=HTMLResponse)
-def setup(
+def setup_step1_discover(
+    ndvr_ip: str = Form(""),
     user: str = Form(""),
     pwd: str = Form(""),
     manufacturer: str = Form("auto"),
@@ -401,6 +465,52 @@ def setup(
     customer_id: str = Form(""),
     site_id: str = Form(""),
 ):
+    import agent.camera.onvif_scan as onvif_scan
+    
+    # Run the fast parallel discovery
+    cams = onvif_scan.scan(target_ip=ndvr_ip.strip() or None, user=user.strip(), passwd=pwd.strip())
+    
+    return _camera_selection_html(
+        cams, user, pwd, manufacturer, customer, site, cloud_url, customer_id, site_id
+    )
+
+from fastapi import Request
+@app.post("/finalize_setup", response_class=HTMLResponse)
+async def finalize_setup(request: Request):
+    form = await request.form()
+    
+    user = form.get("user", "")
+    pwd = form.get("pwd", "")
+    manufacturer = form.get("manufacturer", "auto")
+    customer = form.get("customer", "")
+    site = form.get("site", "")
+    cloud_url = form.get("cloud_url", "cloud.ively.ai")
+    customer_id = form.get("customer_id", "")
+    site_id = form.get("site_id", "")
+    cams_json_str = form.get("cams_json", "[]")
+    
+    selected_cams = form.getlist("selected_cams")
+    
+    try:
+        cams = json.loads(cams_json_str)
+        final_cams = []
+        for c in cams:
+            ip = c["ip"]
+            selected_chs = []
+            for sel in selected_cams:
+                parts = sel.split(":")
+                if len(parts) == 2 and parts[0] == ip:
+                    selected_chs.append(int(parts[1]))
+            if selected_chs:
+                c["selected_channels"] = selected_chs
+                final_cams.append(c)
+                
+        os.makedirs(str(AGENT_DIR), exist_ok=True)
+        with open(AGENT_DIR / "cams.json", "w", encoding="utf-8") as f:
+            json.dump(final_cams, f)
+    except Exception as e:
+        print(f"Error parsing channels: {e}")
+
     edge_dir = "/opt/ively/edge"
     env = {**os.environ, "PYTHONPATH": edge_dir}
     subprocess.Popen(

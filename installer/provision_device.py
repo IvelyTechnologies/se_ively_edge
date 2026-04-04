@@ -115,14 +115,26 @@ else:
     print("      (Cloud may not support WireGuard yet, or wg is not installed)")
 
 # ---------------------------------------------------------------------------
-# 5. Discover cameras
+# 5. Apply Selected Cameras to MediaMTX
 # ---------------------------------------------------------------------------
-print("Discovering cameras...")
-subprocess.run(
-    ["python3", "-m", "agent.camera.discover"],
-    cwd="/opt/ively/edge",
-    check=False,
-)
+cams_file = "/opt/ively/agent/cams.json"
+if os.path.exists(cams_file):
+    print("Applying selected cameras to MediaMTX...")
+    try:
+        with open(cams_file, "r", encoding="utf-8") as f:
+            cams = json.load(f)
+        from agent.camera.mediamtx_writer import generate
+        generate(cams)
+        print(f"MediaMTX configured for {len(cams)} endpoints.")
+    except Exception as e:
+        print(f"Error structuring MediaMTX configuration: {e}")
+else:
+    print("No localized cams.json found. Falling back to full custom discovery...")
+    subprocess.run(
+        ["python3", "-m", "agent.camera.discover"],
+        cwd="/opt/ively/edge",
+        check=False,
+    )
 
 # ---------------------------------------------------------------------------
 # 6. Enable and start services
