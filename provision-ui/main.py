@@ -401,7 +401,7 @@ def _camera_selection_html(cams, user, pwd, manufacturer, customer, site, cloud_
             """
             
     if not checkboxes:
-        checkboxes = "<p style='color: #fca5a5;'>No ONVIF streams discovered. Hit back, clear the NDVR IP field for a full network sweep, or check your credentials.</p>"
+        checkboxes = "<p style='color: #fca5a5;'>No ONVIF streams discovered automatically. Use the manual override below.</p>"
         
     return f"""
 <!DOCTYPE html>
@@ -419,7 +419,7 @@ def _camera_selection_html(cams, user, pwd, manufacturer, customer, site, cloud_
       <p>Select AI Targets</p>
     </div>
     <div class="card">
-        <h2>Detected Cameras</h2>
+        <h2>Cameras & Streams</h2>
         <form method="post" action="/finalize_setup">
             <input type="hidden" name="user" value="{user}">
             <input type="hidden" name="pwd" value="{pwd}">
@@ -432,10 +432,16 @@ def _camera_selection_html(cams, user, pwd, manufacturer, customer, site, cloud_
             <input type="hidden" name="cams_json" value="{cams_json}">
             
             <div class="field">
+              <label>Auto-Discovered</label>
               {checkboxes}
             </div>
             
-            <button type="submit" class="btn" {'disabled' if not cams else ''}>Confirm & Provision Device</button>
+            <div class="field" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px dotted var(--border);">
+              <label for="manual_cams">Manual Override <span class="optional">(One per line)</span></label>
+              <textarea id="manual_cams" name="manual_cams" rows="3" placeholder="IP Address or IP:Channel&#10;e.g., 192.168.0.195:1&#10;e.g., 192.168.0.195:2" style="width: 100%; padding: 0.75rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-family: monospace;"></textarea>
+            </div>
+            
+            <button type="submit" class="btn">Confirm & Provision Device</button>
         </form>
     </div>
   </main>
@@ -491,12 +497,14 @@ async def finalize_setup(request: Request):
     customer_id = form.get("customer_id", "")
     site_id = form.get("site_id", "")
     cams_json_str = form.get("cams_json", "[]")
+    manual_cams_raw = form.get("manual_cams", "")
     
     selected_cams = form.getlist("selected_cams")
     
     try:
+        # 1. Parse Auto-Discovered Cameras
         cams = json.loads(cams_json_str)
-        final_cams = []
+        final_cams_dict = {}
         for c in cams:
             ip = c["ip"]
             selected_chs = []
@@ -505,8 +513,26 @@ async def finalize_setup(request: Request):
                 if len(parts) == 2 and parts[0] == ip:
                     selected_chs.append(int(parts[1]))
             if selected_chs:
-                c["selected_channels"] = selected_chs
-                final_cams.append(c)
+                c["selected_channels"] = sorted(list(set(selected_chs)))
+                final_cams_dict[ip] = c
+                
+        # 2. Parse Manual Overrides
+        for line in manual_cams_raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(":")
+            ip = parts[0].strip()
+            ch = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
+            
+            if ip not in final_cams_dict:
+                final_cams_dict[ip] = {"ip": ip, "model": "manual", "selected_channels": []}
+            
+            if ch not in final_cams_dict[ip]["selected_channels"]:
+                final_cams_dict[ip]["selected_channels"].append(ch)
+                final_cams_dict[ip]["selected_channels"].sort()
+                
+        final_cams = list(final_cams_dict.values())
                 
         os.makedirs(str(AGENT_DIR), exist_ok=True)
         with open(AGENT_DIR / "cams.json", "w", encoding="utf-8") as f:
