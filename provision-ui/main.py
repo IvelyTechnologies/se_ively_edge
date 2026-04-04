@@ -270,9 +270,12 @@ def _provisioned_table_html(info: dict) -> str:
         </table>
       </div>
       <form method="post" action="/rediscover" style="margin-top: 1rem;">
-        <button type="submit" class="btn">Rediscover cameras</button>
+        <button type="submit" class="btn" style="margin-top: 0;">Rediscover cameras</button>
       </form>
-      <p class="footer" style="margin-top: 1rem;">Added a new camera? Click <strong>Rediscover cameras</strong> — no need to run setup again. Streams: port <strong>8080</strong>, path <strong>/view</strong>.</p>
+      <form method="post" action="/reset" style="margin-top: 0.75rem;">
+        <button type="submit" class="btn" style="background: transparent; border: 1px solid var(--border); margin-top: 0; color: var(--text);">Re-setup device</button>
+      </form>
+      <p class="footer" style="margin-top: 1rem;">Added a new camera? Click <strong>Rediscover cameras</strong>. To change Cloud URL, click <strong>Re-setup device</strong>. Streams: port <strong>8080</strong>, path <strong>/view</strong>.</p>
     </div>
   </main>
 </body>
@@ -423,4 +426,18 @@ def rediscover():
         cwd=edge_dir,
         env=env,
     )
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/reset", response_class=HTMLResponse)
+def reset():
+    """Clear provisioning markers and redirect to /."""
+    try:
+        if PROVISIONED_MARKER.exists():
+            PROVISIONED_MARKER.unlink()
+        env_path = AGENT_DIR / ".env"
+        if env_path.exists():
+            env_path.unlink()
+    except Exception as e:
+        print(f"Error resetting: {e}")
     return RedirectResponse(url="/", status_code=303)
