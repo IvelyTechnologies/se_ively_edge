@@ -465,6 +465,10 @@ def setup_step1_discover(
     customer_id: str = Form(""),
     site_id: str = Form(""),
 ):
+    edge_dir = "/opt/ively/edge"
+    if edge_dir not in sys.path:
+        sys.path.insert(0, edge_dir)
+        
     import agent.camera.onvif_scan as onvif_scan
     
     # Run the fast parallel discovery
