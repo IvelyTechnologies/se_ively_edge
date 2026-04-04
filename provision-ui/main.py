@@ -432,12 +432,28 @@ def rediscover():
 @app.post("/reset", response_class=HTMLResponse)
 def reset():
     """Clear provisioning markers and redirect to /."""
+    paths_to_remove = [
+        PROVISIONED_MARKER,
+        AGENT_DIR / ".env",
+        AGENT_DIR / "site.json",
+        AGENT_DIR / "camera.vault",
+        AGENT_DIR / "camera.manufacturer"
+    ]
+    for path in paths_to_remove:
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception as e:
+            print(f"Error removing {path}: {e}")
+            
+    # Also stop the agent service to allow a clean re-setup, if on a real edge device
     try:
-        if PROVISIONED_MARKER.exists():
-            PROVISIONED_MARKER.unlink()
-        env_path = AGENT_DIR / ".env"
-        if env_path.exists():
-            env_path.unlink()
-    except Exception as e:
-        print(f"Error resetting: {e}")
-    return RedirectResponse(url="/", status_code=303)
+        subprocess.run(["systemctl", "stop", "ively-agent"], check=False)
+        subprocess.run(["systemctl", "enable", "ively-provision"], check=False)
+    except Exception:
+        pass
+        
+    response = RedirectResponse(url="/", status_code=303)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
