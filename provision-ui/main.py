@@ -272,9 +272,7 @@ def _provisioned_table_html(info: dict) -> str:
       <form method="post" action="/rediscover" style="margin-top: 1rem;">
         <button type="submit" class="btn" style="margin-top: 0;">Rediscover cameras</button>
       </form>
-      <form method="post" action="/reset" style="margin-top: 0.75rem;">
-        <button type="submit" class="btn" style="background: transparent; border: 1px solid var(--border); margin-top: 0; color: var(--text);">Re-setup device</button>
-      </form>
+      <a href="/setup" class="btn" style="display: block; text-align: center; text-decoration: none; background: transparent; border: 1px solid var(--border); margin-top: 0.75rem; color: var(--text);">Re-setup device</a>
       <p class="footer" style="margin-top: 1rem;">Added a new camera? Click <strong>Rediscover cameras</strong>. To change Cloud URL, click <strong>Re-setup device</strong>. Streams: port <strong>8080</strong>, path <strong>/view</strong>.</p>
     </div>
   </main>
@@ -381,6 +379,12 @@ def page():
     info = _provisioned_info()
     if info is not None:
         return _provisioned_table_html(info)
+    return _setup_form_html()
+
+
+@app.get("/setup", response_class=HTMLResponse)
+def show_setup():
+    """Unconditionally show the setup form for re-setup."""
     return _setup_form_html()
 
 
