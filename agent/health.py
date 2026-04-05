@@ -13,8 +13,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 app = FastAPI()
 
-# MediaMTX WebRTC/HTTP port (from mediamtx.yml webrtcAddress :8889; HTTP often same or 8888)
-MEDIAMTX_PORT = 8889
+# Protocol ports (match mediamtx_writer.py config)
+RTSP_PORT = 8554
+HLS_PORT = 8888
+
 EDGE_DIR = Path("/opt/ively/edge")
 AGENT_DIR = Path("/opt/ively/agent")
 PROVISIONED_MARKER = Path("/opt/ively/.provisioned")
@@ -84,6 +86,225 @@ def _provisioned_info():
     return info
 
 
+def _styles() -> str:
+    """Dark-theme CSS shared across all pages."""
+    return """
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #7dd3fc;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --radius: 12px;
+      --shadow: 0 25px 50px -12px rgba(0,0,0,0.4);
+      --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 1.5rem;
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    .nav {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .nav a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 500;
+      padding: 0.25rem 0.5rem;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
+    .nav a:hover { background: rgba(56,189,248,0.1); }
+    .nav a.active {
+      background: rgba(56,189,248,0.15);
+      color: var(--accent-hover);
+    }
+    .logo { font-size: 1.125rem; font-weight: 700; color: var(--text); margin-right: auto; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 1.25rem;
+    }
+    .card h2 {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; }
+    th { color: var(--text-muted); font-weight: 600; background: rgba(0,0,0,0.15); }
+    .btn {
+      display: inline-block;
+      padding: 0.625rem 1.25rem;
+      font-family: inherit;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--bg);
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.05s;
+      text-decoration: none;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn:active { transform: scale(0.98); }
+    .btn-sm { padding: 0.375rem 0.75rem; font-size: 0.8125rem; }
+    .badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-green { background: rgba(52,211,153,0.2); color: var(--success); }
+    .badge-red   { background: rgba(248,113,113,0.2); color: var(--danger); }
+    .tip { color: var(--text-muted); font-size: 0.875rem; margin-top: 1rem; }
+
+    /* Stream viewer */
+    .stream-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+      gap: 1rem;
+    }
+    .stream-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    .stream-card:hover { border-color: var(--accent); }
+    .stream-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      background: rgba(0,0,0,0.15);
+      border-bottom: 1px solid var(--border);
+    }
+    .stream-name { font-weight: 600; font-size: 0.9375rem; }
+    .stream-body { padding: 0.75rem 1rem; }
+    .stream-video {
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: #000;
+      border-radius: 8px;
+      margin-bottom: 0.75rem;
+    }
+    .url-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+      font-size: 0.8125rem;
+    }
+    .url-label {
+      flex-shrink: 0;
+      font-weight: 700;
+      padding: 0.125rem 0.375rem;
+      border-radius: 4px;
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .url-label-hls  { background: rgba(56,189,248,0.2); color: var(--accent); }
+    .url-label-rtsp { background: rgba(251,191,36,0.2); color: var(--warning); }
+    .url-value {
+      flex: 1;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .copy-btn {
+      flex-shrink: 0;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 4px;
+      padding: 0.125rem 0.375rem;
+      cursor: pointer;
+      font-size: 0.75rem;
+      transition: all 0.2s;
+    }
+    .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .copy-btn.copied { border-color: var(--success); color: var(--success); }
+
+    /* Protocol tab buttons */
+    .proto-tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .proto-tab {
+      padding: 0.25rem 0.75rem;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      background: transparent;
+      color: var(--text-muted);
+      transition: all 0.2s;
+    }
+    .proto-tab:hover { border-color: var(--accent); color: var(--accent); }
+    .proto-tab.active { background: rgba(56,189,248,0.15); border-color: var(--accent); color: var(--accent); }
+
+    /* IP selector */
+    .ip-selector {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 1.25rem;
+    }
+    .ip-selector label { font-size: 0.875rem; font-weight: 600; white-space: nowrap; }
+    .ip-selector select {
+      flex: 1;
+      padding: 0.5rem 0.75rem;
+      font-family: inherit;
+      font-size: 0.875rem;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .ip-selector select:focus { outline: none; border-color: var(--accent); }
+    """
+
+
 @app.get("/")
 def root():
     """Redirect to stream viewer so http://edge.local:8080 shows streams after install."""
@@ -124,38 +345,38 @@ def _provisioned_page_html(info: dict) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ively Edge – Provisioned device</title>
-  <style>
-    body {{ font-family: system-ui, sans-serif; margin: 2rem; max-width: 800px; }}
-    h2 {{ color: #1e293b; margin-top: 1.5rem; }}
-    h2:first-child {{ margin-top: 0; }}
-    table {{ border-collapse: collapse; width: 100%; }}
-    th, td {{ border: 1px solid #cbd5e1; padding: 0.5rem 0.75rem; text-align: left; }}
-    th {{ background: #f1f5f9; font-weight: 600; }}
-    .btn {{ display: inline-block; margin-top: 1rem; padding: 0.5rem 1rem; background: #0ea5e9; color: #fff; text-decoration: none; border-radius: 6px; border: none; font-size: 1rem; cursor: pointer; }}
-    .btn:hover {{ background: #0284c7; }}
-    .nav {{ margin-bottom: 1.5rem; }}
-    .nav a {{ color: #0ea5e9; margin-right: 1rem; }}
-    .tip {{ color: #64748b; font-size: 0.9rem; margin-top: 1rem; }}
-  </style>
+  <style>{_styles()}</style>
 </head>
 <body>
-  <div class="nav"><a href="/view">Streams</a> | <strong>Provisioned device</strong></div>
-  <h2>Provisioned device</h2>
-  <table>
-    <tr><th>Device ID</th><td>{info['device_id']}</td></tr>
-    <tr><th>Cloud URL</th><td>{info['cloud_url']}</td></tr>
-    <tr><th>Customer</th><td>{info['customer']}</td></tr>
-    <tr><th>Site</th><td>{info['site']}</td></tr>{vpn_row}
-  </table>
-  <h2>Cameras (from MediaMTX config)</h2>
-  <table>
-    <thead><tr><th>Stream path</th></tr></thead>
-    <tbody>{camera_rows}</tbody>
-  </table>
-  <form method="post" action="/rediscover" style="margin-top: 1rem;">
-    <button type="submit" class="btn">Rediscover cameras</button>
-  </form>
-  <p class="tip">Added a new camera? Click <strong>Rediscover cameras</strong> to scan the network again and update the list. You do not need to run Provision setup again.</p>
+  <div class="container">
+    <div class="nav">
+      <span class="logo">Ively SmartEye™</span>
+      <a href="/view">Streams</a>
+      <a href="/provisioned" class="active">Device</a>
+    </div>
+
+    <div class="card">
+      <h2>Device Info</h2>
+      <table>
+        <tr><th>Device ID</th><td>{info['device_id']}</td></tr>
+        <tr><th>Cloud URL</th><td>{info['cloud_url']}</td></tr>
+        <tr><th>Customer</th><td>{info['customer']}</td></tr>
+        <tr><th>Site</th><td>{info['site']}</td></tr>{vpn_row}
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Cameras (MediaMTX Config)</h2>
+      <table>
+        <thead><tr><th>Stream path</th></tr></thead>
+        <tbody>{camera_rows}</tbody>
+      </table>
+      <form method="post" action="/rediscover" style="margin-top: 1rem;">
+        <button type="submit" class="btn">Rediscover cameras</button>
+      </form>
+      <p class="tip">Added a new camera? Click <strong>Rediscover cameras</strong> to scan the network again.</p>
+    </div>
+  </div>
 </body>
 </html>
 """
@@ -197,63 +418,205 @@ def rediscover():
 @app.get("/view", response_class=HTMLResponse)
 def view():
     """
-    Stream viewer: after installation, open this page to verify P2P video.
-    Links to MediaMTX player for each camera stream (cam1_hd, cam1_low, etc.).
+    Stream viewer: HLS playback in-browser + RTSP URLs for each camera.
+    Supports LAN IP and WireGuard VPN IP switching.
     """
     paths = _stream_paths()
     if not paths:
         paths = ["cam1_hd", "cam1_low"]
 
-    # Use same host as request so it works via edge.local or IP
-    base = "http://localhost"
-    # When accessed as http://edge.local:8080/view, we want links to edge.local:8889
-    # So we use a small JS that replaces host with current window.location.hostname
-    rows = "".join(
-        f"""
-        <tr>
-          <td>{name}</td>
-          <td><a href="#" class="stream-link" data-path="{name}">Open stream</a></td>
-        </tr>"""
-        for name in paths
-    )
+    # Get VPN IP if available
+    vpn_ip = None
+    vpn = _vpn_status_dict()
+    if vpn and vpn.get("interface_up") and vpn.get("vpn_ip"):
+        vpn_ip = vpn["vpn_ip"]
+
+    vpn_ip_json = json.dumps(vpn_ip)
+    paths_json = json.dumps(paths)
 
     return f"""
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Ively Edge – Streams</title>
-  <style>
-    body {{ font-family: sans-serif; margin: 2rem; }}
-    h2 {{ color: #333; }}
-    table {{ border-collapse: collapse; }}
-    th, td {{ border: 1px solid #ccc; padding: 0.5rem 1rem; text-align: left; }}
-    th {{ background: #eee; }}
-    .stream-link {{ color: #06c; }}
-    iframe {{ width: 100%; height: 480px; border: 1px solid #ccc; margin-top: 1rem; }}
-    .player {{ margin-top: 1rem; }}
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ively Edge – Stream Viewer</title>
+  <style>{_styles()}</style>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 </head>
 <body>
-  <h2>Ively SmartEye™ – Live streams (P2P)</h2>
-  <p>Use these links to verify camera feeds after installation. Streams are served by MediaMTX (WebRTC). <a href="/provisioned">Provisioned device &amp; cameras</a></p>
-  <table>
-    <thead><tr><th>Stream</th><th>Action</th></tr></thead>
-    <tbody>{rows}</tbody>
-  </table>
-  <div class="player" id="player"></div>
+  <div class="container">
+    <div class="nav">
+      <span class="logo">Ively SmartEye™</span>
+      <a href="/view" class="active">Streams</a>
+      <a href="/provisioned">Device</a>
+    </div>
+
+    <!-- IP / Host selector -->
+    <div class="ip-selector">
+      <label for="host-select">Access via:</label>
+      <select id="host-select">
+        <option value="__browser__" selected>Current (Browser Host)</option>
+      </select>
+      <span class="badge badge-green" id="vpn-badge" style="display: none;">VPN</span>
+    </div>
+
+    <!-- Stream grid -->
+    <div class="stream-grid" id="stream-grid"></div>
+
+    <p class="tip" style="margin-top: 1.5rem;">
+      <strong>HLS</strong> plays directly in the browser. <strong>RTSP</strong> URLs can be opened in VLC or any RTSP player.
+      Switch the access host above to use VPN IP for remote playback.
+    </p>
+  </div>
+
   <script>
-    document.querySelectorAll('.stream-link').forEach(function(a) {{
-      a.onclick = function(e) {{
-        e.preventDefault();
-        var path = this.getAttribute('data-path');
-        var host = window.location.hostname;
-        var url = 'http://' + host + ':{MEDIAMTX_PORT}/' + path + '/';
-        document.getElementById('player').innerHTML =
-          '<p>Playing: ' + path + ' – <a href="' + url + '" target="_blank">Open in new tab</a></p>' +
-          '<iframe src="' + url + '" title="' + path + '"></iframe>';
-      }};
-    }});
+  (function() {{
+    const RTSP_PORT = {RTSP_PORT};
+    const HLS_PORT  = {HLS_PORT};
+    const PATHS     = {paths_json};
+    const VPN_IP    = {vpn_ip_json};
+
+    const hostSelect = document.getElementById('host-select');
+    const vpnBadge   = document.getElementById('vpn-badge');
+    const grid       = document.getElementById('stream-grid');
+
+    // Populate host options
+    const browserHost = window.location.hostname;
+    hostSelect.querySelector('option[value="__browser__"]').textContent =
+      'LAN (' + browserHost + ')';
+
+    if (VPN_IP) {{
+      const opt = document.createElement('option');
+      opt.value = VPN_IP;
+      opt.textContent = 'VPN (' + VPN_IP + ')';
+      hostSelect.appendChild(opt);
+      vpnBadge.style.display = 'inline-block';
+    }}
+
+    function getHost() {{
+      const v = hostSelect.value;
+      return v === '__browser__' ? browserHost : v;
+    }}
+
+    function hlsUrl(host, path) {{
+      return 'http://' + host + ':' + HLS_PORT + '/' + path + '/index.m3u8';
+    }}
+    function rtspUrl(host, path) {{
+      return 'rtsp://' + host + ':' + RTSP_PORT + '/' + path;
+    }}
+
+    function copyToClipboard(text, btn) {{
+      navigator.clipboard.writeText(text).then(function() {{
+        btn.classList.add('copied');
+        btn.textContent = '✓';
+        setTimeout(function() {{ btn.classList.remove('copied'); btn.textContent = 'Copy'; }}, 1500);
+      }});
+    }}
+
+    function buildCards() {{
+      const host = getHost();
+      grid.innerHTML = '';
+
+      PATHS.forEach(function(path) {{
+        const card = document.createElement('div');
+        card.className = 'stream-card';
+
+        const hls  = hlsUrl(host, path);
+        const rtsp = rtspUrl(host, path);
+        const videoId = 'video-' + path.replace(/[^a-zA-Z0-9]/g, '_');
+
+        card.innerHTML = `
+          <div class="stream-header">
+            <span class="stream-name">${{path}}</span>
+            <div class="proto-tabs">
+              <button class="proto-tab active" data-proto="hls" data-path="${{path}}">HLS</button>
+              <button class="proto-tab" data-proto="rtsp" data-path="${{path}}">RTSP</button>
+            </div>
+          </div>
+          <div class="stream-body">
+            <div class="player-area" id="player-${{path}}">
+              <video id="${{videoId}}" class="stream-video" controls autoplay muted playsinline></video>
+            </div>
+            <div class="url-row">
+              <span class="url-label url-label-hls">HLS</span>
+              <span class="url-value" title="${{hls}}">${{hls}}</span>
+              <button class="copy-btn" onclick="copyUrl(this, '${{hls}}')">Copy</button>
+            </div>
+            <div class="url-row">
+              <span class="url-label url-label-rtsp">RTSP</span>
+              <span class="url-value" title="${{rtsp}}">${{rtsp}}</span>
+              <button class="copy-btn" onclick="copyUrl(this, '${{rtsp}}')">Copy</button>
+            </div>
+          </div>
+        `;
+
+        grid.appendChild(card);
+
+        // Attach HLS player
+        const videoEl = document.getElementById(videoId);
+        attachHls(videoEl, hls);
+
+        // Proto tab switching
+        card.querySelectorAll('.proto-tab').forEach(function(tab) {{
+          tab.addEventListener('click', function() {{
+            card.querySelectorAll('.proto-tab').forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+
+            const proto = this.getAttribute('data-proto');
+            const playerArea = card.querySelector('.player-area');
+
+            if (proto === 'hls') {{
+              playerArea.innerHTML = `<video id="${{videoId}}" class="stream-video" controls autoplay muted playsinline></video>`;
+              const newVideo = document.getElementById(videoId);
+              attachHls(newVideo, hlsUrl(getHost(), path));
+            }} else {{
+              const r = rtspUrl(getHost(), path);
+              playerArea.innerHTML = `
+                <div class="stream-video" style="display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-muted); gap: 0.75rem;">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z"/><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  <span style="font-size: 0.875rem; font-weight: 600;">RTSP Stream</span>
+                  <code style="font-size: 0.75rem; color: var(--accent); word-break: break-all; text-align: center; padding: 0 1rem;">${{r}}</code>
+                  <span style="font-size: 0.75rem;">Open this URL in VLC or any RTSP-compatible player</span>
+                </div>
+              `;
+            }}
+          }});
+        }});
+      }});
+    }}
+
+    function attachHls(videoEl, url) {{
+      if (!videoEl) return;
+      if (Hls.isSupported()) {{
+        const hls = new Hls({{ enableWorker: true, lowLatencyMode: true }});
+        hls.loadSource(url);
+        hls.attachMedia(videoEl);
+        hls.on(Hls.Events.ERROR, function(event, data) {{
+          if (data.fatal) {{
+            videoEl.poster = '';
+            videoEl.parentElement.innerHTML = `
+              <div class="stream-video" style="display: flex; align-items: center; justify-content: center; color: var(--danger); font-size: 0.875rem;">
+                Stream unavailable — waiting for camera feed
+              </div>
+            `;
+          }}
+        }});
+      }} else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {{
+        // Native HLS (Safari)
+        videoEl.src = url;
+      }}
+    }}
+
+    // Expose copy helper globally (used in onclick)
+    window.copyUrl = function(btn, url) {{ copyToClipboard(url, btn); }};
+
+    // Rebuild cards when host changes
+    hostSelect.addEventListener('change', buildCards);
+
+    // Initial build
+    buildCards();
+  }})();
   </script>
 </body>
 </html>
