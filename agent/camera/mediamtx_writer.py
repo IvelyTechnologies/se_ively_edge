@@ -42,24 +42,24 @@ MODEL_TO_MANUFACTURER = [
 # (main_stream_format, sub_stream_format). Use {username}, {password}, {ip}, {channel}, {profile}
 RTSP_FORMATS = {
     "hikvision": (
-        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/101",
-        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/102",
+        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/{channel}01",
+        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/{channel}02",
     ),
     "dahua": (
-        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel=1&subtype=0",
-        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel=1&subtype=1",
+        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=0",
+        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
     ),
     "cp plus": (
-        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel=1&subtype=0",
-        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel=1&subtype=1",
+        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=0",
+        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
     ),
     "godrej": (
-        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/101",
-        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/102",
+        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/{channel}01",
+        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/{channel}02",
     ),
     "prama": (
-        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/101",
-        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/102",
+        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/{channel}01",
+        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/{channel}02",
     ),
     "axis": (
         "rtsp://{username}:{password}@{ip}:554/axis-media/media.amp",
@@ -70,8 +70,8 @@ RTSP_FORMATS = {
         "rtsp://{username}:{password}@{ip}:554/rtsp_tunnel",
     ),
     "hanwha": (
-        "rtsp://{username}:{password}@{ip}:554/streaming/channels/102",
-        "rtsp://{username}:{password}@{ip}:554/streaming/channels/101",
+        "rtsp://{username}:{password}@{ip}:554/streaming/channels/{channel}02",
+        "rtsp://{username}:{password}@{ip}:554/streaming/channels/{channel}01",
     ),
     "zicom": (
         "rtsp://{username}:{password}@{ip}:554/onvif/profile2",
@@ -98,16 +98,16 @@ RTSP_FORMATS = {
         "rtsp://{username}:{password}@{ip}:554/media/2",
     ),
     "sony": (
-        "rtsp://{username}:{password}@{ip}:554/streaming/channels/101",
-        "rtsp://{username}:{password}@{ip}:554/streaming/channels/102",
+        "rtsp://{username}:{password}@{ip}:554/streaming/channels/{channel}01",
+        "rtsp://{username}:{password}@{ip}:554/streaming/channels/{channel}02",
     ),
     "samsung": (
         "rtsp://{username}:{password}@{ip}:554/onvif/profile2",
         "rtsp://{username}:{password}@{ip}:554/onvif/profile1",
     ),
     "pelco": (
-        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/101",
-        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/102",
+        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/{channel}01",
+        "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/{channel}02",
     ),
     "avigilon": (
         "rtsp://{username}:{password}@{ip}:554/stream1",
@@ -118,22 +118,23 @@ RTSP_FORMATS = {
         "rtsp://{username}:{password}@{ip}:554/full",
     ),
     "secureye": (
-        "rtsp://{username}:{password}@{ip}:554/user={username}_password={password}_channel=1_stream=0.sdp",
-        "rtsp://{username}:{password}@{ip}:554/user={username}_password={password}_channel=1_stream=1.sdp",
+        "rtsp://{username}:{password}@{ip}:554/user={username}_password={password}_channel={channel}_stream=0.sdp",
+        "rtsp://{username}:{password}@{ip}:554/user={username}_password={password}_channel={channel}_stream=1.sdp",
     ),
     "uniview": (
-        "rtsp://{username}:{password}@{ip}:554/streaming/channels/101",
-        "rtsp://{username}:{password}@{ip}:554/streaming/channels/102",
+        "rtsp://{username}:{password}@{ip}:554/streaming/channels/{channel}01",
+        "rtsp://{username}:{password}@{ip}:554/streaming/channels/{channel}02",
     ),
     "tiandy": (
-        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel=1&subtype=0",
-        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel=1&subtype=1",
+        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=0",
+        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
     ),
     "onvif": (
         "rtsp://{username}:{password}@{ip}:554/onvif1",
         "rtsp://{username}:{password}@{ip}:554/onvif1",
     ),
 }
+
 
 
 MANUFACTURER_OVERRIDE_PATH = "/opt/ively/agent/camera.manufacturer"
