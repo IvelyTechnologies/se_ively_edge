@@ -313,7 +313,7 @@ def _setup_form_html() -> str:
         <div class="field">
           <label for="cloud_url">Cloud URL</label>
           <!-- Accept hostname or IP; no URL format validation -->
-          <input id="cloud_url" name="cloud_url" type="text" placeholder="cloud.ively.ai or IP" value="cloud.ively.ai" required autocomplete="off">
+          <input id="cloud_url" name="cloud_url" type="text" placeholder="209.74.93.16 or IP" value="209.74.93.16" required autocomplete="off">
         </div>
         <div class="field">
           <label for="ndvr_ip">NDVR / Camera IP <span class="optional">(optional for full sweep)</span></label>
