@@ -229,7 +229,11 @@ def _provisioned_info():
     if MEDIAMTX_CONFIG.exists():
         try:
             text = MEDIAMTX_CONFIG.read_text(encoding="utf-8")
-            info["cameras"] = re.findall(r"^\s+([a-zA-Z0-9_]+):\s*$", text, re.MULTILINE)
+            _NON_STREAM = {"paths", "rtsp", "hls", "webrtc", "api", "record", "metrics"}
+            info["cameras"] = [
+                p for p in re.findall(r"^\s+([a-zA-Z0-9_]+):\s*$", text, re.MULTILINE)
+                if p.lower() not in _NON_STREAM
+            ]
         except Exception:
             pass
     return info

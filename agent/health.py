@@ -36,7 +36,12 @@ def _stream_paths():
         return []
     try:
         text = MEDIAMTX_CONFIG.read_text(encoding="utf-8")
-        return re.findall(r"^\s+([a-zA-Z0-9_]+):\s*$", text, re.MULTILINE)
+        # Filter out YAML section headers / config keys that aren't actual streams
+        _NON_STREAM = {"paths", "rtsp", "hls", "webrtc", "api", "record", "metrics"}
+        return [
+            p for p in re.findall(r"^\s+([a-zA-Z0-9_]+):\s*$", text, re.MULTILINE)
+            if p.lower() not in _NON_STREAM
+        ]
     except Exception:
         return []
 
