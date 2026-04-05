@@ -242,12 +242,17 @@ def generate(
     prefix = _path_prefix()
     path_label = f"{prefix}_" if prefix else ""
 
-    cfg = """webrtc: yes
-webrtcAddress: :8889
+    cfg = """# --- Protocol Configuration ---
+# RTSP server
+rtsp: yes
+rtspAddress: :8554
 
-# STUN server (FREE)
-webrtcICEServers2:
-  - url: stun:stun.l.google.com:19302
+# HLS server
+hls: yes
+hlsAddress: :8888
+
+# WebRTC disabled
+webrtc: no
 
 paths:
 """
@@ -255,9 +260,18 @@ paths:
     for c in cams:
         ip = c["ip"]
         model = c.get("model", "")
-        channels_count = c.get("channels", 1)
-        
-        for ch in range(1, channels_count + 1):
+
+        # Support both formats:
+        #   - "selected_channels": [1, 2]  (from provision UI / manual override)
+        #   - "channels": 4                (from auto-discovery count)
+        selected_channels = c.get("selected_channels")
+        if selected_channels:
+            channel_list = selected_channels
+        else:
+            channels_count = c.get("channels", 1)
+            channel_list = list(range(1, channels_count + 1))
+
+        for ch in channel_list:
             hd_url, low_url = _rtsp_urls(
                 ip, model, username, password, manufacturer_override, channel=str(ch)
             )
