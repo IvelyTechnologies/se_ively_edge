@@ -1,4 +1,4 @@
-# health server + stream viewer (for P2P verification after install)
+# health server + stream viewer + remote diagnostics (for P2P verification after install)
 
 import json
 import os
@@ -7,11 +7,20 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 app = FastAPI()
+
+# Remote diagnostics (imported from commands module)
+try:
+    from agent.commands import run_diagnostics, DIAGNOSTIC_COMMANDS
+    HAS_DIAGNOSTICS = True
+except ImportError:
+    HAS_DIAGNOSTICS = False
+    DIAGNOSTIC_COMMANDS = {}
 
 # Protocol ports (match mediamtx_writer.py config)
 RTSP_PORT = 8554
@@ -358,6 +367,7 @@ def _provisioned_page_html(info: dict) -> str:
       <span class="logo">Ively SmartEye™</span>
       <a href="/view">Streams</a>
       <a href="/provisioned" class="active">Device</a>
+      <a href="/diagnostics/ui">Diagnostics</a>
     </div>
 
     <div class="card">
@@ -455,6 +465,7 @@ def view():
       <span class="logo">Ively SmartEye™</span>
       <a href="/view" class="active">Streams</a>
       <a href="/provisioned">Device</a>
+      <a href="/diagnostics/ui">Diagnostics</a>
     </div>
 
     <!-- IP / Host selector -->
@@ -621,6 +632,296 @@ def view():
 
     // Initial build
     buildCards();
+  }})();
+  </script>
+</body>
+</html>
+"""
+
+
+# ---------------------------------------------------------------------------
+# Remote Diagnostics — JSON API + Web UI
+# ---------------------------------------------------------------------------
+
+@app.get("/diagnostics")
+def diagnostics_api(
+    commands: Optional[str] = Query(None, description="Comma-separated command names, or 'all'"),
+    timeout: int = Query(15, ge=1, le=60),
+):
+    """
+    JSON API for remote diagnostics. Called by server over VPN or WebSocket.
+
+    Examples:
+      GET /diagnostics                           → default MediaMTX debug bundle
+      GET /diagnostics?commands=mediamtx_logs,disk_usage
+      GET /diagnostics?commands=all              → run all available commands
+    """
+    if not HAS_DIAGNOSTICS:
+        return {"success": False, "message": "Diagnostics module not available"}
+
+    cmd_list = None
+    if commands:
+        if commands.strip().lower() == "all":
+            cmd_list = sorted(DIAGNOSTIC_COMMANDS.keys())
+        else:
+            cmd_list = [c.strip() for c in commands.split(",") if c.strip()]
+
+    return run_diagnostics(commands=cmd_list, timeout=timeout)
+
+
+@app.get("/diagnostics/ui", response_class=HTMLResponse)
+def diagnostics_ui():
+    """Interactive diagnostics dashboard — run debug commands from the browser."""
+    cmd_names = sorted(DIAGNOSTIC_COMMANDS.keys()) if HAS_DIAGNOSTICS else []
+    cmd_names_json = json.dumps(cmd_names)
+
+    return f"""
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ively Edge – Diagnostics</title>
+  <style>{_styles()}
+    .diag-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 0.5rem;
+      margin-bottom: 1.25rem;
+    }}
+    .diag-chip {{
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      transition: all 0.2s;
+      user-select: none;
+    }}
+    .diag-chip:hover {{ border-color: var(--accent); color: var(--text); }}
+    .diag-chip.selected {{
+      background: rgba(56,189,248,0.15);
+      border-color: var(--accent);
+      color: var(--accent);
+    }}
+    .diag-chip input {{ display: none; }}
+    .diag-chip .check {{
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.2s;
+    }}
+    .diag-chip.selected .check {{
+      background: var(--accent);
+      border-color: var(--accent);
+    }}
+    .diag-chip.selected .check::after {{
+      content: '✓';
+      color: var(--bg);
+      font-size: 0.625rem;
+      font-weight: 700;
+    }}
+    .action-bar {{
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }}
+    .result-block {{
+      margin-bottom: 1rem;
+    }}
+    .result-header {{
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.5rem;
+    }}
+    .result-header h3 {{
+      font-size: 0.875rem;
+      font-weight: 700;
+      margin: 0;
+    }}
+    .result-status {{
+      font-size: 0.6875rem;
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-weight: 600;
+    }}
+    .result-status.ok {{ background: rgba(52,211,153,0.2); color: var(--success); }}
+    .result-status.fail {{ background: rgba(248,113,113,0.2); color: var(--danger); }}
+    .result-status.err {{ background: rgba(251,191,36,0.2); color: var(--warning); }}
+    pre.output {{
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      font-size: 0.75rem;
+      line-height: 1.6;
+      color: #e2e8f0;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 300px;
+      overflow-y: auto;
+    }}
+    .spinner {{
+      display: inline-block;
+      width: 18px; height: 18px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }}
+    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    #results-area {{ min-height: 100px; }}
+    .empty-state {{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 200px;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+    }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <span class="logo">Ively SmartEye™</span>
+      <a href="/view">Streams</a>
+      <a href="/provisioned">Device</a>
+      <a href="/diagnostics/ui" class="active">Diagnostics</a>
+    </div>
+
+    <div class="card">
+      <h2>Remote Diagnostics Console</h2>
+      <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
+        Select diagnostic commands to execute on this edge device. Results are displayed in real-time.
+      </p>
+
+      <div class="diag-grid" id="cmd-grid"></div>
+
+      <div class="action-bar">
+        <button class="btn" id="btn-run" onclick="runSelected()">▶ Run Selected</button>
+        <button class="btn" style="background: var(--success);" onclick="runAll()">⚡ Run All</button>
+        <button class="btn btn-sm" style="background: transparent; border: 1px solid var(--border); color: var(--text-muted);" onclick="selectDefault()">MediaMTX Bundle</button>
+        <button class="btn btn-sm" style="background: transparent; border: 1px solid var(--border); color: var(--text-muted);" onclick="clearAll()">Clear Selection</button>
+      </div>
+    </div>
+
+    <div id="results-area">
+      <div class="empty-state">Select commands above and click <strong>&nbsp;▶ Run Selected&nbsp;</strong> to begin</div>
+    </div>
+  </div>
+
+  <script>
+  (function() {{
+    const COMMANDS = {cmd_names_json};
+    const DEFAULT_BUNDLE = ['mediamtx_config', 'mediamtx_logs', 'mediamtx_ports', 'mediamtx_paths'];
+    const grid = document.getElementById('cmd-grid');
+    const results = document.getElementById('results-area');
+
+    // Build chips
+    COMMANDS.forEach(function(name) {{
+      const chip = document.createElement('label');
+      chip.className = 'diag-chip';
+      chip.innerHTML = '<span class="check"></span><span>' + name.replace(/_/g, ' ') + '</span>';
+      chip.dataset.cmd = name;
+      chip.addEventListener('click', function() {{
+        this.classList.toggle('selected');
+      }});
+      grid.appendChild(chip);
+    }});
+
+    function getSelected() {{
+      return Array.from(grid.querySelectorAll('.diag-chip.selected')).map(c => c.dataset.cmd);
+    }}
+
+    window.selectDefault = function() {{
+      grid.querySelectorAll('.diag-chip').forEach(c => {{
+        c.classList.toggle('selected', DEFAULT_BUNDLE.includes(c.dataset.cmd));
+      }});
+    }};
+
+    window.clearAll = function() {{
+      grid.querySelectorAll('.diag-chip').forEach(c => c.classList.remove('selected'));
+    }};
+
+    window.runAll = function() {{
+      grid.querySelectorAll('.diag-chip').forEach(c => c.classList.add('selected'));
+      runSelected();
+    }};
+
+    window.runSelected = function() {{
+      const cmds = getSelected();
+      if (cmds.length === 0) {{
+        results.innerHTML = '<div class="empty-state" style="border-color: var(--warning);">⚠ No commands selected</div>';
+        return;
+      }}
+
+      results.innerHTML = '<div class="card" style="display: flex; align-items: center; gap: 0.75rem;"><div class="spinner"></div><span>Running ' + cmds.length + ' diagnostic command(s)…</span></div>';
+
+      fetch('/diagnostics?commands=' + cmds.join(','))
+        .then(r => r.json())
+        .then(function(data) {{
+          if (!data.success) {{
+            results.innerHTML = '<div class="card" style="border-color: var(--danger);"><h2>Error</h2><pre class="output">' + (data.message || 'Unknown error') + '</pre></div>';
+            return;
+          }}
+          let html = '';
+          const diag = data.diagnostics || {{}};
+          for (const [name, info] of Object.entries(diag)) {{
+            const hasError = !!info.error;
+            const rc = info.returncode;
+            let statusClass = 'ok';
+            let statusText = 'exit ' + rc;
+            if (hasError) {{
+              statusClass = 'err';
+              statusText = 'error';
+            }} else if (rc !== 0) {{
+              statusClass = 'fail';
+            }}
+
+            let outputText = '';
+            if (hasError) {{
+              outputText = info.error;
+            }} else {{
+              outputText = info.stdout || '';
+              if (info.stderr) outputText += '\n--- stderr ---\n' + info.stderr;
+              if (!outputText.trim()) outputText = '(no output)';
+            }}
+
+            html += '<div class="result-block"><div class="result-header">';
+            html += '<h3>' + name.replace(/_/g, ' ') + '</h3>';
+            html += '<span class="result-status ' + statusClass + '">' + statusText + '</span>';
+            html += '</div>';
+            html += '<pre class="output">' + escapeHtml(outputText) + '</pre></div>';
+          }}
+          results.innerHTML = '<div class="card">' + html + '</div>';
+        }})
+        .catch(function(err) {{
+          results.innerHTML = '<div class="card" style="border-color: var(--danger);"><h2>Request Failed</h2><pre class="output">' + err + '</pre></div>';
+        }});
+    }};
+
+    function escapeHtml(text) {{
+      const el = document.createElement('span');
+      el.textContent = text;
+      return el.innerHTML;
+    }}
+
+    // Auto-select default bundle on load
+    selectDefault();
   }})();
   </script>
 </body>
