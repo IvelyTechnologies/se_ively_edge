@@ -88,7 +88,7 @@ def _check_wireguard() -> None:
         wg_restart_tunnel()
         return
 
-    if not wg_tunnel_healthy(max_handshake_age_sec=300):
+    if not wg_tunnel_healthy(max_handshake_age_sec=120):
         print("WireGuard tunnel unhealthy (stale handshake) — restarting")
         wg_restart_tunnel()
 

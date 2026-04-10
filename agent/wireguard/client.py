@@ -56,6 +56,8 @@ def write_config(
     config = f"""[Interface]
 PrivateKey = {private_key}
 Address = {vpn_ip}/16
+MTU = 1380
+DNS = 1.1.1.1, 8.8.8.8
 
 [Peer]
 PublicKey = {server_public_key}
@@ -78,6 +80,9 @@ def start_tunnel() -> bool:
     """Bring up WireGuard interface. Returns True on success."""
     # Bring down first in case it's already running (idempotent)
     subprocess.run(["wg-quick", "down", WG_INTERFACE], capture_output=True, timeout=15)
+    # Enterprise failsafe: force delete the kernel link if wg-quick down leaves a ghost interface
+    subprocess.run(["ip", "link", "delete", "dev", WG_INTERFACE], capture_output=True, timeout=5)
+    
     result = subprocess.run(
         ["wg-quick", "up", WG_INTERFACE],
         capture_output=True,
@@ -99,6 +104,9 @@ def stop_tunnel() -> bool:
         text=True,
         timeout=15,
     )
+    # Failsafe ghost interface cleanup
+    subprocess.run(["ip", "link", "delete", "dev", WG_INTERFACE], capture_output=True, timeout=5)
+    
     if result.returncode != 0:
         print(f"WireGuard stop failed: {result.stderr.strip()}")
         return False
