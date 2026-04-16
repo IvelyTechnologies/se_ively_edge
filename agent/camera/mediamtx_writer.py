@@ -3,8 +3,10 @@
 import json
 import os
 import re
+import shlex
+import subprocess
 import urllib.parse
-from typing import Optional, Tuple
+from typing import Optional
 
 SITE_CONFIG_PATH = "/opt/ively/agent/site.json"
 
@@ -222,6 +224,103 @@ def _load_credentials(vault_path: str = "/opt/ively/agent/camera.vault"):
         return (None, None)
 
 
+_NVENC_AVAILABLE: Optional[bool] = None
+
+
+def _ffmpeg_has_h264_nvenc() -> bool:
+    """True if this system's ffmpeg build lists NVIDIA H.264 encoding."""
+    global _NVENC_AVAILABLE
+    if _NVENC_AVAILABLE is not None:
+        return _NVENC_AVAILABLE
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        out = (r.stdout or "") + (r.stderr or "")
+        _NVENC_AVAILABLE = "h264_nvenc" in out
+    except Exception:
+        _NVENC_AVAILABLE = False
+    return _NVENC_AVAILABLE
+
+
+def _use_nvenc_encoder() -> bool:
+    """NVENC is opt-in (IVELY_USE_NVENC=1): avoids failures when ffmpeg has nvenc but no GPU."""
+    v = (os.environ.get("IVELY_USE_NVENC") or "").strip().lower()
+    return v in ("1", "true", "yes") and _ffmpeg_has_h264_nvenc()
+
+
+def _ffmpeg_transcode_publish_command(rtsp_input_url: str) -> str:
+    """
+    FFmpeg pulls camera RTSP (H.265/H.264/MJPEG, etc.) and publishes H.264 to this MediaMTX path
+    via RTSP (publisher). Output is browser-safe: yuv420p, short GOP, no B-frames (WebRTC/HLS friendly).
+    """
+    quoted_in = shlex.quote(rtsp_input_url)
+    publish_to = "rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH"
+
+    if _use_nvenc_encoder():
+        venc = [
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            "p4",
+            "-profile:v",
+            "main",
+            "-bf",
+            "0",
+        ]
+    else:
+        venc = [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-tune",
+            "zerolatency",
+            "-profile:v",
+            "main",
+            "-level",
+            "4.1",
+            "-bf",
+            "0",
+        ]
+
+    parts = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-rtsp_transport",
+        "tcp",
+        "-fflags",
+        "nobuffer",
+        "-flags",
+        "low_delay",
+        "-i",
+        quoted_in,
+        "-map",
+        "0:v:0",
+        "-an",
+        *venc,
+        "-g",
+        "50",
+        "-keyint_min",
+        "25",
+        "-sc_threshold",
+        "0",
+        "-pix_fmt",
+        "yuv420p",
+        "-f",
+        "rtsp",
+        "-rtsp_transport",
+        "tcp",
+        publish_to,
+    ]
+    return " ".join(parts)
+
+
 def generate(
     cams,
     config_path: str = "/opt/ively/mediamtx/mediamtx.yml",
@@ -255,6 +354,8 @@ hlsAddress: :8888
 # WebRTC disabled
 webrtc: no
 
+# Camera paths use FFmpeg to publish H.264 (browser-safe for HLS). Source may be H.265/HEVC.
+
 paths:
 """
     camera_index = 1
@@ -276,12 +377,22 @@ paths:
             hd_url, low_url = _rtsp_urls(
                 ip, model, username, password, manufacturer_override, channel=str(ch)
             )
+            low_cmd = _ffmpeg_transcode_publish_command(low_url)
+            hd_cmd = _ffmpeg_transcode_publish_command(hd_url)
             cfg += f"""
   {path_label}cam{camera_index}_low:
-    source: {low_url}
+    source: publisher
+    runOnDemand: {low_cmd}
+    runOnDemandRestart: yes
+    runOnDemandStartTimeout: 35s
+    runOnDemandCloseAfter: 15s
 
   {path_label}cam{camera_index}_hd:
-    source: {hd_url}
+    source: publisher
+    runOnDemand: {hd_cmd}
+    runOnDemandRestart: yes
+    runOnDemandStartTimeout: 35s
+    runOnDemandCloseAfter: 15s
 """
             camera_index += 1
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
