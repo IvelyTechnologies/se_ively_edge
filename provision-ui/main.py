@@ -1,11 +1,14 @@
-from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, List, Union
+
+import requests
 
 app = FastAPI()
 
@@ -18,6 +21,73 @@ import agent.camera.onvif_scan as onvif_scan
 AGENT_DIR = Path("/opt/ively/agent")
 PROVISIONED_MARKER = Path("/opt/ively/.provisioned")
 MEDIAMTX_CONFIG = Path("/opt/ively/mediamtx/mediamtx.yml")
+
+# Cloud REST API (customer / site lists for provisioning UI). Override base if needed.
+IVELY_API_BASE = (os.environ.get("IVELY_API_BASE") or "https://api.ivelytech.com").rstrip("/")
+CUSTOMER_USERS_LIMIT = int(os.environ.get("IVELY_CUSTOMER_USERS_LIMIT", "500"))
+IVELY_API_TIMEOUT = float(os.environ.get("IVELY_API_TIMEOUT", "15"))
+
+
+def _ively_api_headers() -> dict:
+    h = {"accept": "application/json"}
+    token = (os.environ.get("IVELY_API_TOKEN") or os.environ.get("IVELY_CLOUD_API_KEY") or "").strip()
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+
+def _get_json(url: str) -> Any:
+    r = requests.get(url, headers=_ively_api_headers(), timeout=IVELY_API_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def _get_json_or_empty_on_404(url: str) -> Any:
+    r = requests.get(url, headers=_ively_api_headers(), timeout=IVELY_API_TIMEOUT)
+    if r.status_code == 404:
+        return []
+    r.raise_for_status()
+    return r.json()
+
+
+def _dedupe_customers(rows: List[dict]) -> List[dict]:
+    """Build unique customers from getCustomerUsers rows (same customer_id may repeat per user)."""
+    by_id: dict = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cid = row.get("customer_id")
+        if cid is None:
+            continue
+        label = (
+            row.get("customer_name")
+            or row.get("company_name")
+            or row.get("org_name")
+        )
+        name = (str(label).strip() if label else "") or ""
+        if cid not in by_id:
+            by_id[cid] = {"customer_id": cid, "name": name or f"Customer {cid}"}
+        elif name and (
+            by_id[cid]["name"].startswith("Customer ")
+            or not (by_id[cid]["name"] or "").strip()
+        ):
+            by_id[cid]["name"] = name
+    return sorted(by_id.values(), key=lambda x: int(x["customer_id"]))
+
+
+def _normalize_sites_payload(data: Union[dict, list, None]) -> List[dict]:
+    if data is None:
+        return []
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    if isinstance(data, dict):
+        if "sites" in data and isinstance(data["sites"], list):
+            return [x for x in data["sites"] if isinstance(x, dict)]
+        if "data" in data and isinstance(data["data"], list):
+            return [x for x in data["data"] if isinstance(x, dict)]
+        return [data]
+    return []
+
 
 MANUFACTURERS = [
     ("auto", "Auto-detect from camera"),
@@ -174,6 +244,22 @@ def _styles() -> str:
       font-size: 0.8125rem;
       color: var(--text-muted);
     }
+    .field-hint {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      margin-top: 0.35rem;
+    }
+    .field-hint.error { color: #fca5a5; }
+    .link-toggle {
+      background: none;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 0.8125rem;
+      text-decoration: underline;
+      padding: 0;
+      margin-top: 0.5rem;
+    }
     /* Success page */
     .success-card {
       text-align: center;
@@ -313,31 +399,54 @@ def _setup_form_html() -> str:
     </div>
     <div class="card">
       <h2>Provision & Discover</h2>
-      <form method="post" action="/setup">
+      <form id="setup_form" method="post" action="/setup">
+        <input type="hidden" name="customer" id="f_customer" value="">
+        <input type="hidden" name="customer_id" id="f_customer_id" value="">
+        <input type="hidden" name="site" id="f_site" value="">
+        <input type="hidden" name="site_id" id="f_site_id" value="">
         <div class="field">
           <label for="cloud_url">Cloud URL</label>
-          <!-- Accept hostname or IP; no URL format validation -->
-          <input id="cloud_url" name="cloud_url" type="text" placeholder="209.74.93.16 or IP" value="209.74.93.16" required autocomplete="off">
+          <input id="cloud_url" name="cloud_url" type="text" placeholder="https://api.ivelytech.com or IP" value="209.74.93.16" required autocomplete="off">
         </div>
         <div class="field">
           <label for="ndvr_ip">NDVR / Camera IP <span class="optional">(optional for full sweep)</span></label>
           <input id="ndvr_ip" name="ndvr_ip" type="text" placeholder="e.g. 192.168.0.104">
         </div>
-        <div class="field">
-          <label for="customer">Customer name</label>
-          <input id="customer" name="customer" type="text" placeholder="e.g. Acme Corp" required>
+        <div id="cs_api_mode">
+          <div class="field">
+            <label for="customer_select">Customer</label>
+            <select id="customer_select" aria-describedby="customer_site_err">
+              <option value="">Loading customers…</option>
+            </select>
+            <p id="customer_site_err" class="field-hint error" style="display:none;"></p>
+          </div>
+          <div class="field">
+            <label for="site_select">Site</label>
+            <select id="site_select" disabled>
+              <option value="">Select customer first</option>
+            </select>
+            <p class="field-hint">Lists load from the cloud API (via this device).</p>
+          </div>
+          <button type="button" class="link-toggle" id="btn_manual_cs">Enter customer / site manually instead</button>
         </div>
-        <div class="field">
-          <label for="customer_id">Customer ID <span class="optional">(optional)</span></label>
-          <input id="customer_id" name="customer_id" type="number" placeholder="e.g. 123">
-        </div>
-        <div class="field">
-          <label for="site">Site name</label>
-          <input id="site" name="site" type="text" placeholder="e.g. Warehouse A" required>
-        </div>
-        <div class="field">
-          <label for="site_id">Site ID <span class="optional">(optional)</span></label>
-          <input id="site_id" name="site_id" type="number" placeholder="e.g. 456">
+        <div id="cs_manual_mode" style="display:none;">
+          <div class="field">
+            <label for="customer_manual">Customer name</label>
+            <input id="customer_manual" type="text" placeholder="e.g. Acme Corp" autocomplete="organization">
+          </div>
+          <div class="field">
+            <label for="customer_id_manual">Customer ID <span class="optional">(optional)</span></label>
+            <input id="customer_id_manual" type="number" placeholder="e.g. 10000000001" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label for="site_manual">Site name</label>
+            <input id="site_manual" type="text" placeholder="e.g. Warehouse A" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="site_id_manual">Site ID <span class="optional">(optional)</span></label>
+            <input id="site_id_manual" type="number" placeholder="e.g. 10000000002" inputmode="numeric">
+          </div>
+          <button type="button" class="link-toggle" id="btn_api_cs">Use customer &amp; site lists from API</button>
         </div>
         <div class="field">
           <label for="manufacturer">Camera manufacturer</label>
@@ -356,6 +465,145 @@ def _setup_form_html() -> str:
     </div>
     <p class="footer">Next, you'll select which cameras to process for AI.</p>
   </main>
+  <script>
+(function() {{
+  const form = document.getElementById('setup_form');
+  const custSel = document.getElementById('customer_select');
+  const siteSel = document.getElementById('site_select');
+  const apiMode = document.getElementById('cs_api_mode');
+  const manualMode = document.getElementById('cs_manual_mode');
+  const errEl = document.getElementById('customer_site_err');
+  const fCust = document.getElementById('f_customer');
+  const fCustId = document.getElementById('f_customer_id');
+  const fSite = document.getElementById('f_site');
+  const fSiteId = document.getElementById('f_site_id');
+  const mCust = document.getElementById('customer_manual');
+  const mCustId = document.getElementById('customer_id_manual');
+  const mSite = document.getElementById('site_manual');
+  const mSiteId = document.getElementById('site_id_manual');
+
+  function setErr(msg) {{
+    if (!errEl) return;
+    errEl.textContent = msg || '';
+    errEl.style.display = msg ? 'block' : 'none';
+  }}
+
+  function syncFromApi() {{
+    const co = custSel.options[custSel.selectedIndex];
+    fCustId.value = custSel.value || '';
+    fCust.value = (co && custSel.value) ? co.textContent.trim() : '';
+    const so = siteSel.options[siteSel.selectedIndex];
+    fSiteId.value = siteSel.value || '';
+    fSite.value = (so && siteSel.value) ? so.textContent.trim() : '';
+  }}
+
+  function syncFromManual() {{
+    fCust.value = (mCust.value || '').trim();
+    fCustId.value = (mCustId.value || '').trim();
+    fSite.value = (mSite.value || '').trim();
+    fSiteId.value = (mSiteId.value || '').trim();
+  }}
+
+  async function loadCustomers() {{
+    custSel.innerHTML = '<option value="">Loading…</option>';
+    custSel.disabled = true;
+    try {{
+      const r = await fetch('/api/provision/customers');
+      const body = await r.json().catch(function() {{ return {{}}; }});
+      if (!r.ok) throw new Error(body.detail || r.statusText || 'Request failed');
+      const list = body.customers || [];
+      custSel.innerHTML = '<option value="">Select customer…</option>';
+      list.forEach(function(c) {{
+        const o = document.createElement('option');
+        o.value = String(c.customer_id);
+        o.textContent = c.name || ('Customer ' + c.customer_id);
+        custSel.appendChild(o);
+      }});
+      custSel.disabled = false;
+      setErr('');
+      siteSel.innerHTML = '<option value="">Select customer first</option>';
+      siteSel.disabled = true;
+    }} catch (e) {{
+      custSel.innerHTML = '<option value="">Could not load</option>';
+      custSel.disabled = true;
+      setErr((e && e.message) ? e.message : 'Could not load customers.');
+    }}
+  }}
+
+  async function loadSites(customerId) {{
+    if (!customerId) {{
+      siteSel.innerHTML = '<option value="">Select customer first</option>';
+      siteSel.disabled = true;
+      syncFromApi();
+      return;
+    }}
+    siteSel.innerHTML = '<option value="">Loading sites…</option>';
+    siteSel.disabled = true;
+    try {{
+      const r = await fetch('/api/provision/customers/' + encodeURIComponent(customerId) + '/sites');
+      const body = await r.json().catch(function() {{ return {{}}; }});
+      if (!r.ok) throw new Error(body.detail || r.statusText || 'Request failed');
+      const list = body.sites || [];
+      siteSel.innerHTML = '<option value="">Select site…</option>';
+      list.forEach(function(s) {{
+        const o = document.createElement('option');
+        o.value = String(s.site_id);
+        o.textContent = s.name || ('Site ' + s.site_id);
+        siteSel.appendChild(o);
+      }});
+      siteSel.disabled = list.length === 0;
+      if (list.length === 0) {{
+        siteSel.innerHTML = '<option value="">No sites for this customer</option>';
+      }}
+    }} catch (e) {{
+      siteSel.innerHTML = '<option value="">Failed to load sites</option>';
+      siteSel.disabled = true;
+    }}
+    syncFromApi();
+  }}
+
+  custSel.addEventListener('change', function() {{
+    syncFromApi();
+    loadSites(custSel.value);
+  }});
+  siteSel.addEventListener('change', syncFromApi);
+
+  [mCust, mCustId, mSite, mSiteId].forEach(function(el) {{
+    el.addEventListener('input', syncFromManual);
+  }});
+
+  document.getElementById('btn_manual_cs').addEventListener('click', function() {{
+    apiMode.style.display = 'none';
+    manualMode.style.display = 'block';
+    syncFromManual();
+  }});
+  document.getElementById('btn_api_cs').addEventListener('click', function() {{
+    manualMode.style.display = 'none';
+    apiMode.style.display = 'block';
+    syncFromApi();
+  }});
+
+  form.addEventListener('submit', function(e) {{
+    if (manualMode.style.display !== 'none') {{
+      syncFromManual();
+      if (!(fCust.value || '').trim() || !(fSite.value || '').trim()) {{
+        e.preventDefault();
+        alert('Please enter customer name and site name.');
+        return;
+      }}
+    }} else {{
+      syncFromApi();
+      if (!custSel.value || !siteSel.value) {{
+        e.preventDefault();
+        alert('Please select a customer and a site.');
+        return;
+      }}
+    }}
+  }});
+
+  loadCustomers();
+}})();
+  </script>
 </body>
 </html>
 """
@@ -454,6 +702,45 @@ def _camera_selection_html(cams, user, pwd, manufacturer, customer, site, cloud_
 """
 
 
+@app.get("/api/provision/customers")
+def api_provision_customers():
+    """Proxy: unique customers from cloud getCustomerUsers (deduped by customer_id)."""
+    try:
+        url = (
+            f"{IVELY_API_BASE}/api/v1/customer_users/getCustomerUsers"
+            f"?skip=0&limit={CUSTOMER_USERS_LIMIT}"
+        )
+        data = _get_json(url)
+        if not isinstance(data, list):
+            raise ValueError("customer_users response is not a JSON array")
+        customers = _dedupe_customers(data)
+        return JSONResponse({"customers": customers})
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=str(e) or "upstream request failed")
+    except (ValueError, TypeError, KeyError) as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/provision/customers/{customer_id}/sites")
+def api_provision_customer_sites(customer_id: int):
+    """Proxy: sites for a customer from getCustomerSites/{customer_id}."""
+    try:
+        url = f"{IVELY_API_BASE}/api/v1/customer_sites/getCustomerSites/{customer_id}"
+        data = _get_json_or_empty_on_404(url)
+        raw = _normalize_sites_payload(data)
+        sites = []
+        for s in raw:
+            sid = s.get("id")
+            if sid is None:
+                continue
+            nm = (s.get("name") or "").strip() or f"Site {sid}"
+            sites.append({"site_id": sid, "name": nm})
+        sites.sort(key=lambda x: int(x["site_id"]))
+        return JSONResponse({"sites": sites})
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=str(e) or "upstream request failed")
+
+
 @app.get("/", response_class=HTMLResponse)
 def page():
     info = _provisioned_info()
@@ -487,7 +774,6 @@ def setup_step1_discover(
         cams, user, pwd, manufacturer, customer, site, cloud_url, customer_id, site_id
     )
 
-from fastapi import Request
 @app.post("/finalize_setup", response_class=HTMLResponse)
 async def finalize_setup(request: Request):
     form = await request.form()
