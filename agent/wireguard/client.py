@@ -53,11 +53,17 @@ def write_config(
 
     Returns the path to the written config file.
     """
+    # NOTE: Do NOT set `DNS = ...` here. With a split-tunnel `AllowedIPs`
+    # (e.g. 10.20.0.0/16), wg-quick would hand the resolver to systemd-resolved
+    # with the default routing domain `~.`, making it steal every DNS query
+    # for wg0. Those DNS packets are not inside AllowedIPs, so they never
+    # egress the tunnel and all public-name lookups hang (github.com, cloud
+    # URL, etc.) — while IP-based traffic (RTSP to 10.20.0.x) keeps working.
+    # The device's LAN DNS handles public names correctly on its own.
     config = f"""[Interface]
 PrivateKey = {private_key}
 Address = {vpn_ip}/16
 MTU = 1380
-DNS = 1.1.1.1, 8.8.8.8
 
 [Peer]
 PublicKey = {server_public_key}
@@ -70,6 +76,49 @@ PersistentKeepalive = {keepalive}
         f.write(config)
     os.chmod(WG_CONFIG_PATH, 0o600)
     return WG_CONFIG_PATH
+
+
+# ---------------------------------------------------------------------------
+# One-shot migration — strip stale `DNS =` line from existing wg0.conf
+# ---------------------------------------------------------------------------
+
+def migrate_strip_dns_line() -> bool:
+    """
+    Remove a stale `DNS = ...` line from an existing wg0.conf and restart
+    the tunnel so systemd-resolved drops the `~.` default-route domain on wg0.
+
+    Older builds of this agent wrote `DNS = 1.1.1.1, 8.8.8.8` into wg0.conf,
+    which made wg-quick hijack every DNS query on the device (public lookups
+    hung while VPN IP traffic kept working). This one-shot migration fixes
+    already-deployed devices without needing a re-provision.
+
+    Safe to call on every agent boot: if the file has no `DNS =` line, it
+    does nothing. Returns True iff the config was modified.
+    """
+    try:
+        with open(WG_CONFIG_PATH, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return False
+
+    new_lines = [ln for ln in lines if not ln.lstrip().lower().startswith("dns")]
+    if len(new_lines) == len(lines):
+        return False
+
+    try:
+        with open(WG_CONFIG_PATH, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+        os.chmod(WG_CONFIG_PATH, 0o600)
+    except OSError as e:
+        print(f"wg0.conf DNS migration: failed to write config: {e}")
+        return False
+
+    print("wg0.conf: stripped stale `DNS =` line — restarting tunnel")
+    try:
+        restart_tunnel()
+    except Exception as e:
+        print(f"wg0.conf DNS migration: tunnel restart failed: {e}")
+    return True
 
 
 # ---------------------------------------------------------------------------
