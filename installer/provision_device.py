@@ -51,12 +51,57 @@ if site_id:
     except ValueError:
         pass
 
-resp = requests.post(
-    f"http://{cloud_host}/register-edge",
-    json=register_payload,
-    timeout=30,
-).json()
+def _register_with_cloud(host: str, payload: dict) -> dict:
+    """
+    POST to /register-edge. Tries https first, falls back to http.
+    On any failure (non-2xx, bad JSON, missing fields) prints exactly what
+    the server returned so the operator can diagnose from the provisioning
+    UI logs instead of seeing a bare KeyError.
+    """
+    last_err: str = ""
+    for scheme in ("https", "http"):
+        url = f"{scheme}://{host}/register-edge"
+        try:
+            r = requests.post(url, json=payload, timeout=30)
+        except requests.RequestException as exc:
+            last_err = f"{scheme}: {exc}"
+            print(f"  tried {url} -> network error: {exc}")
+            continue
 
+        body_preview = (r.text or "")[:1000]
+        if r.status_code >= 400:
+            last_err = f"{scheme}: HTTP {r.status_code}"
+            print(f"  tried {url} -> HTTP {r.status_code}")
+            print(f"  response body: {body_preview}")
+            # Keep trying the other scheme in case it's a redirect/misconfig
+            continue
+
+        try:
+            data = r.json()
+        except ValueError:
+            last_err = f"{scheme}: non-JSON response"
+            print(f"  tried {url} -> non-JSON response:")
+            print(f"  response body: {body_preview}")
+            continue
+
+        missing = [k for k in ("device_id", "token") if k not in data]
+        if missing:
+            print(f"  tried {url} -> JSON missing required fields: {missing}")
+            print(f"  full response: {json.dumps(data)[:1000]}")
+            last_err = f"{scheme}: missing fields {missing}"
+            continue
+
+        print(f"  registered via {url}")
+        return data
+
+    print(f"ERROR: device registration failed on host '{host}'. Last error: {last_err}")
+    print("       Check: cloud URL correctness, that /register-edge exists,")
+    print("       that customer_id/site_id (if required) are valid, and that")
+    print("       the device can reach the cloud (internet + DNS).")
+    sys.exit(1)
+
+
+resp = _register_with_cloud(cloud_host, register_payload)
 device_id = resp["device_id"]
 token = resp["token"]
 
@@ -76,7 +121,19 @@ with open("/opt/ively/agent/camera.vault", "w", encoding="utf-8") as f:
 with open("/opt/ively/agent/camera.manufacturer", "w", encoding="utf-8") as f:
     f.write(manufacturer)
 
-site_config = {"customer": customer_name, "site": site_name}
+site_config: dict[str, Any] = {"customer": customer_name, "site": site_name}
+# Also persist IDs when we have them, so the provisioned-info UI can show
+# both the name and the ID. Absent fields stay None and the UI hides them.
+if customer_id:
+    try:
+        site_config["customer_id"] = int(customer_id)
+    except ValueError:
+        site_config["customer_id"] = customer_id
+if site_id:
+    try:
+        site_config["site_id"] = int(site_id)
+    except ValueError:
+        site_config["site_id"] = site_id
 with open("/opt/ively/agent/site.json", "w", encoding="utf-8") as f:
     json.dump(site_config, f, indent=2)
 

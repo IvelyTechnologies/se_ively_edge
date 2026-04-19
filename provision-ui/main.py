@@ -50,6 +50,48 @@ def _get_json_or_empty_on_404(url: str) -> Any:
     return r.json()
 
 
+_CUSTOMER_NAME_KEYS = (
+    "customer_name",
+    "company_name",
+    "org_name",
+    "organization_name",
+    "organisation_name",
+    "display_name",
+    "full_name",
+    "name",
+)
+
+
+def _extract_customer_name(row: dict) -> str:
+    """
+    Pull a human-readable customer name out of a getCustomerUsers row, trying
+    a variety of common field shapes so we don't fall back to "Customer <id>"
+    just because the cloud API uses a slightly different key.
+    """
+    for k in _CUSTOMER_NAME_KEYS:
+        v = row.get(k)
+        if v:
+            s = str(v).strip()
+            if s:
+                return s
+
+    # Nested: {"customer": {"name": "..."}}
+    cust = row.get("customer")
+    if isinstance(cust, dict):
+        for k in _CUSTOMER_NAME_KEYS:
+            v = cust.get(k)
+            if v:
+                s = str(v).strip()
+                if s:
+                    return s
+
+    # Fallback: first_name + last_name (the per-user row identity)
+    fn = str(row.get("first_name") or "").strip()
+    ln = str(row.get("last_name") or "").strip()
+    combo = (fn + " " + ln).strip()
+    return combo
+
+
 def _dedupe_customers(rows: List[dict]) -> List[dict]:
     """Build unique customers from getCustomerUsers rows (same customer_id may repeat per user)."""
     by_id: dict = {}
@@ -59,12 +101,7 @@ def _dedupe_customers(rows: List[dict]) -> List[dict]:
         cid = row.get("customer_id")
         if cid is None:
             continue
-        label = (
-            row.get("customer_name")
-            or row.get("company_name")
-            or row.get("org_name")
-        )
-        name = (str(label).strip() if label else "") or ""
+        name = _extract_customer_name(row)
         if cid not in by_id:
             by_id[cid] = {"customer_id": cid, "name": name or f"Customer {cid}"}
         elif name and (
@@ -290,7 +327,15 @@ def _provisioned_info():
     """Return dict with device_id, cloud_url, customer, site, cameras; or None if not provisioned."""
     if not PROVISIONED_MARKER.exists() and not (AGENT_DIR / ".env").exists():
         return None
-    info = {"device_id": "—", "cloud_url": "—", "customer": "—", "site": "—", "cameras": []}
+    info: dict = {
+        "device_id": "—",
+        "cloud_url": "—",
+        "customer": "—",
+        "customer_id": None,
+        "site": "—",
+        "site_id": None,
+        "cameras": [],
+    }
     try:
         env_path = AGENT_DIR / ".env"
         if env_path.exists():
@@ -310,6 +355,12 @@ def _provisioned_info():
             data = json.loads(site_path.read_text(encoding="utf-8"))
             info["customer"] = data.get("customer") or "—"
             info["site"] = data.get("site") or "—"
+            # Optional ID fields — only present on deployments provisioned
+            # after we started persisting them; old site.json files are fine.
+            if data.get("customer_id") not in (None, ""):
+                info["customer_id"] = data.get("customer_id")
+            if data.get("site_id") not in (None, ""):
+                info["site_id"] = data.get("site_id")
     except Exception:
         pass
     if MEDIAMTX_CONFIG.exists():
@@ -330,6 +381,15 @@ def _provisioned_table_html(info: dict) -> str:
     camera_rows = "".join(f"<tr><td>{p}</td></tr>" for p in info["cameras"])
     if not camera_rows:
         camera_rows = "<tr><td>No cameras in config yet. Run Rediscover to scan.</td></tr>"
+
+    # Show "Name (ID: 123)" when an ID was persisted; otherwise just the name.
+    customer_cell = info["customer"]
+    if info.get("customer_id") not in (None, ""):
+        customer_cell = f"{info['customer']} <span style='color:var(--text-muted)'>(ID: {info['customer_id']})</span>"
+    site_cell = info["site"]
+    if info.get("site_id") not in (None, ""):
+        site_cell = f"{info['site']} <span style='color:var(--text-muted)'>(ID: {info['site_id']})</span>"
+
     return f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -351,8 +411,8 @@ def _provisioned_table_html(info: dict) -> str:
         <table>
           <tr><th>Device ID</th><td>{info['device_id']}</td></tr>
           <tr><th>Cloud URL</th><td>{info['cloud_url']}</td></tr>
-          <tr><th>Customer</th><td>{info['customer']}</td></tr>
-          <tr><th>Site</th><td>{info['site']}</td></tr>
+          <tr><th>Customer</th><td>{customer_cell}</td></tr>
+          <tr><th>Site</th><td>{site_cell}</td></tr>
         </table>
       </div>
     </div>
@@ -491,10 +551,15 @@ def _setup_form_html() -> str:
   function syncFromApi() {{
     const co = custSel.options[custSel.selectedIndex];
     fCustId.value = custSel.value || '';
-    fCust.value = (co && custSel.value) ? co.textContent.trim() : '';
+    // Prefer clean name stored on data-name; fall back to label (which may include "(ID: ...)").
+    fCust.value = (co && custSel.value)
+      ? ((co.dataset && co.dataset.name) ? co.dataset.name : co.textContent.trim())
+      : '';
     const so = siteSel.options[siteSel.selectedIndex];
     fSiteId.value = siteSel.value || '';
-    fSite.value = (so && siteSel.value) ? so.textContent.trim() : '';
+    fSite.value = (so && siteSel.value)
+      ? ((so.dataset && so.dataset.name) ? so.dataset.name : so.textContent.trim())
+      : '';
   }}
 
   function syncFromManual() {{
@@ -516,7 +581,13 @@ def _setup_form_html() -> str:
       list.forEach(function(c) {{
         const o = document.createElement('option');
         o.value = String(c.customer_id);
-        o.textContent = c.name || ('Customer ' + c.customer_id);
+        const cleanName = c.name || ('Customer ' + c.customer_id);
+        // Keep the pure name for the hidden form field (preserves site.json shape),
+        // but show "Name (ID: 123)" in the dropdown so both are visible to the operator.
+        o.dataset.name = cleanName;
+        o.textContent = c.name
+          ? (cleanName + '  (ID: ' + c.customer_id + ')')
+          : cleanName;
         custSel.appendChild(o);
       }});
       custSel.disabled = false;
@@ -548,7 +619,11 @@ def _setup_form_html() -> str:
       list.forEach(function(s) {{
         const o = document.createElement('option');
         o.value = String(s.site_id);
-        o.textContent = s.name || ('Site ' + s.site_id);
+        const cleanName = s.name || ('Site ' + s.site_id);
+        o.dataset.name = cleanName;
+        o.textContent = s.name
+          ? (cleanName + '  (ID: ' + s.site_id + ')')
+          : cleanName;
         siteSel.appendChild(o);
       }});
       siteSel.disabled = list.length === 0;
@@ -721,6 +796,42 @@ def api_provision_customers():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+_SITE_ID_KEYS = ("id", "site_id", "siteId")
+_SITE_NAME_KEYS = ("name", "site_name", "display_name", "title", "label")
+
+
+def _extract_site_id(row: dict):
+    for k in _SITE_ID_KEYS:
+        v = row.get(k)
+        if v is not None:
+            return v
+    site = row.get("site")
+    if isinstance(site, dict):
+        for k in _SITE_ID_KEYS:
+            v = site.get(k)
+            if v is not None:
+                return v
+    return None
+
+
+def _extract_site_name(row: dict) -> str:
+    for k in _SITE_NAME_KEYS:
+        v = row.get(k)
+        if v:
+            s = str(v).strip()
+            if s:
+                return s
+    site = row.get("site")
+    if isinstance(site, dict):
+        for k in _SITE_NAME_KEYS:
+            v = site.get(k)
+            if v:
+                s = str(v).strip()
+                if s:
+                    return s
+    return ""
+
+
 @app.get("/api/provision/customers/{customer_id}/sites")
 def api_provision_customer_sites(customer_id: int):
     """Proxy: sites for a customer from getCustomerSites/{customer_id}."""
@@ -730,10 +841,10 @@ def api_provision_customer_sites(customer_id: int):
         raw = _normalize_sites_payload(data)
         sites = []
         for s in raw:
-            sid = s.get("id")
+            sid = _extract_site_id(s)
             if sid is None:
                 continue
-            nm = (s.get("name") or "").strip() or f"Site {sid}"
+            nm = _extract_site_name(s) or f"Site {sid}"
             sites.append({"site_id": sid, "name": nm})
         sites.sort(key=lambda x: int(x["site_id"]))
         return JSONResponse({"sites": sites})
