@@ -48,11 +48,11 @@ RTSP_FORMATS = {
         "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/{channel}02",
     ),
     "dahua": (
-        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=0",
+        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
         "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
     ),
     "cp plus": (
-        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=0",
+        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
         "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
     ),
     "godrej": (
