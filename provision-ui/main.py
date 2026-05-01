@@ -836,7 +836,7 @@ def _extract_site_name(row: dict) -> str:
 def api_provision_customer_sites(customer_id: int):
     """Proxy: sites for a customer from getCustomerSites/{customer_id}."""
     try:
-        url = f"{IVELY_API_BASE}/api/v1/customer_sites/getCustomerSites/{customer_id}"
+        url = f"{IVELY_API_BASE}/api/v1/customer_sites/getSitesByCustomerId/{customer_id}"
         data = _get_json_or_empty_on_404(url)
         raw = _normalize_sites_payload(data)
         sites = []
