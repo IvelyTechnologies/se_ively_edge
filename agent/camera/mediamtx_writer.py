@@ -176,21 +176,21 @@ def _load_manufacturer_override(path: str = MANUFACTURER_OVERRIDE_PATH) -> Optio
         return None
 
 
-def _rtsp_urls(
+def _rtsp_low_url(
     ip: str,
     model: str,
     username: str,
     password: str,
     manufacturer_override: Optional[str] = None,
     channel: str = "1",
-) -> tuple[str, str]:
-    """Return (hd_url, low_url) with credentials embedded."""
+) -> str:
+    """Return low/sub-stream RTSP URL with credentials embedded."""
     if manufacturer_override and manufacturer_override in RTSP_FORMATS:
         manufacturer = manufacturer_override
     else:
         manufacturer = _manufacturer_from_model(model)
     formats = RTSP_FORMATS.get(manufacturer, RTSP_FORMATS["onvif"])
-    main_fmt, sub_fmt = formats
+    _, sub_fmt = formats
     safe_user = urllib.parse.quote(username or "", safe="")
     safe_pass = urllib.parse.quote(password or "", safe="")
     params = {
@@ -201,16 +201,12 @@ def _rtsp_urls(
         "profile": "2",
     }
     try:
-        hd_url = main_fmt.format(**params)
         low_url = sub_fmt.format(**params)
     except KeyError:
-        hd_url = main_fmt.replace("{username}", safe_user).replace(
-            "{password}", safe_pass
-        ).replace("{ip}", ip)
         low_url = sub_fmt.replace("{username}", safe_user).replace(
             "{password}", safe_pass
         ).replace("{ip}", ip)
-    return (hd_url, low_url)
+    return low_url
 
 
 def _load_credentials(vault_path: str = "/opt/ively/agent/camera.vault"):
@@ -329,7 +325,7 @@ def generate(
     vault_path: str = "/opt/ively/agent/camera.vault",
     manufacturer_override: Optional[str] = None,
 ):
-    """Generate mediamtx.yml from discovered cameras. One _low and one _hd path per camera."""
+    """Generate mediamtx.yml from discovered cameras. Only _low paths are generated."""
     if username is None or password is None:
         username, password = _load_credentials(vault_path)
     if not username:
@@ -374,22 +370,14 @@ paths:
             channel_list = list(range(1, channels_count + 1))
 
         for ch in channel_list:
-            hd_url, low_url = _rtsp_urls(
+            low_url = _rtsp_low_url(
                 ip, model, username, password, manufacturer_override, channel=str(ch)
             )
             low_cmd = _ffmpeg_transcode_publish_command(low_url)
-            hd_cmd = _ffmpeg_transcode_publish_command(hd_url)
             cfg += f"""
   {path_label}cam{camera_index}_low:
     source: publisher
     runOnDemand: {low_cmd}
-    runOnDemandRestart: yes
-    runOnDemandStartTimeout: 35s
-    runOnDemandCloseAfter: 15s
-
-  {path_label}cam{camera_index}_hd:
-    source: publisher
-    runOnDemand: {hd_cmd}
     runOnDemandRestart: yes
     runOnDemandStartTimeout: 35s
     runOnDemandCloseAfter: 15s

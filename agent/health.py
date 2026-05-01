@@ -438,7 +438,7 @@ def view():
     """
     paths = _stream_paths()
     if not paths:
-        paths = ["cam1_hd", "cam1_low"]
+        paths = ["cam1_low"]
 
     # Get VPN IP if available
     vpn_ip = None

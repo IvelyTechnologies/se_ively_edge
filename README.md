@@ -61,7 +61,7 @@ End-to-end flow from preparing the device to a working, provisioned edge with st
 
 | Step | Action | Expected outcome |
 |------|--------|------------------|
-| 4.1 | Open **http://&lt;device-ip&gt;:8080/view**. | Stream viewer page; list of stream paths (e.g. `cam1_low`, `cam1_hd`). Click "Open stream" to verify video. |
+| 4.1 | Open **http://&lt;device-ip&gt;:8080/view**. | Stream viewer page; list of stream paths (e.g. `cam1_low`). Click "Open stream" to verify video. |
 | 4.2 | Open **http://&lt;device-ip&gt;:8080/provisioned**. | Table: Device ID, Cloud URL, Customer, Site, **VPN Status**, **VPN IP**, and list of camera stream paths. |
 | 4.3 | On the device run: `sudo systemctl status ively-agent mediamtx`. | Both show **active (running)**. |
 | 4.4 | Check VPN: `sudo wg show`. | Shows WireGuard interface with handshake and transfer data. |
