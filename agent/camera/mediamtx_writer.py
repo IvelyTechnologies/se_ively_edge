@@ -3,7 +3,6 @@
 import json
 import os
 import re
-import shlex
 import subprocess
 import urllib.parse
 from typing import Optional
@@ -248,12 +247,21 @@ def _use_nvenc_encoder() -> bool:
     return v in ("1", "true", "yes") and _ffmpeg_has_h264_nvenc()
 
 
+def _ffmpeg_input_shell_quoted(rtsp_input_url: str) -> str:
+    """Shell-safe double-quoted -i argument (matches proven MediaMTX runOnDemand lines)."""
+    esc = (rtsp_input_url or "").replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{esc}"'
+
+
 def _ffmpeg_transcode_publish_command(rtsp_input_url: str) -> str:
     """
     FFmpeg pulls camera RTSP (H.265/H.264/MJPEG, etc.) and publishes H.264 to this MediaMTX path
     via RTSP (publisher). Output is browser-safe: yuv420p, short GOP, no B-frames (WebRTC/HLS friendly).
+
+    Flags aligned with field-proven MediaMTX configs: -loglevel error, input TCP, no extra output
+    -rtsp_transport (MediaMTX sets publisher RTSP as needed).
     """
-    quoted_in = shlex.quote(rtsp_input_url)
+    quoted_in = _ffmpeg_input_shell_quoted(rtsp_input_url)
     publish_to = "rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH"
 
     if _use_nvenc_encoder():
@@ -287,7 +295,7 @@ def _ffmpeg_transcode_publish_command(rtsp_input_url: str) -> str:
         "ffmpeg",
         "-hide_banner",
         "-loglevel",
-        "warning",
+        "error",
         "-rtsp_transport",
         "tcp",
         "-fflags",
@@ -310,8 +318,6 @@ def _ffmpeg_transcode_publish_command(rtsp_input_url: str) -> str:
         "yuv420p",
         "-f",
         "rtsp",
-        "-rtsp_transport",
-        "tcp",
         publish_to,
     ]
     return " ".join(parts)
