@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 import urllib.parse
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 SITE_CONFIG_PATH = "/opt/ively/agent/site.json"
 
@@ -208,6 +208,39 @@ def _rtsp_low_url(
     return low_url
 
 
+def _rtsp_main_url(
+    ip: str,
+    model: str,
+    username: str,
+    password: str,
+    manufacturer_override: Optional[str] = None,
+    channel: str = "1",
+) -> str:
+    """Return main/high-stream RTSP URL with credentials embedded."""
+    if manufacturer_override and manufacturer_override in RTSP_FORMATS:
+        manufacturer = manufacturer_override
+    else:
+        manufacturer = _manufacturer_from_model(model)
+    formats = RTSP_FORMATS.get(manufacturer, RTSP_FORMATS["onvif"])
+    main_fmt, _ = formats
+    safe_user = urllib.parse.quote(username or "", safe="")
+    safe_pass = urllib.parse.quote(password or "", safe="")
+    params = {
+        "username": safe_user,
+        "password": safe_pass,
+        "ip": ip,
+        "channel": channel,
+        "profile": "1",
+    }
+    try:
+        main_url = main_fmt.format(**params)
+    except KeyError:
+        main_url = main_fmt.replace("{username}", safe_user).replace(
+            "{password}", safe_pass
+        ).replace("{ip}", ip)
+    return main_url
+
+
 def _load_credentials(vault_path: str = "/opt/ively/agent/camera.vault"):
     """Load and decrypt camera credentials from vault. Returns (user, password) or (None, None)."""
     try:
@@ -253,7 +286,93 @@ def _ffmpeg_input_shell_quoted(rtsp_input_url: str) -> str:
     return f'"{esc}"'
 
 
-def _ffmpeg_transcode_publish_command(rtsp_input_url: str) -> str:
+DEFAULT_STREAM_PROFILES: Dict[str, Dict[str, str]] = {
+    # Tuned for constrained VPN links while preserving low latency.
+    "low": {
+        "width": "640",
+        "height": "360",
+        "fps": "10",
+        "bitrate": "450k",
+        "maxrate": "500k",
+        "bufsize": "1000k",
+        "gop": "20",
+        "keyint_min": "10",
+    },
+    "mid": {
+        "width": "960",
+        "height": "540",
+        "fps": "15",
+        "bitrate": "1000k",
+        "maxrate": "1200k",
+        "bufsize": "2400k",
+        "gop": "30",
+        "keyint_min": "15",
+    },
+    "high": {
+        "width": "1280",
+        "height": "720",
+        "fps": "15",
+        "bitrate": "2200k",
+        "maxrate": "2500k",
+        "bufsize": "5000k",
+        "gop": "30",
+        "keyint_min": "15",
+    },
+}
+
+
+def _load_stream_profiles() -> Dict[str, Dict[str, str]]:
+    """
+    Load encoder profile overrides from IVELY_STREAM_PROFILES_JSON.
+    Must be a JSON object like:
+    {"low":{"fps":"8","bitrate":"350k"}, "mid": {...}, "high": {...}}
+    """
+    raw = (os.environ.get("IVELY_STREAM_PROFILES_JSON") or "").strip()
+    if not raw:
+        return DEFAULT_STREAM_PROFILES
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            return DEFAULT_STREAM_PROFILES
+        merged = {name: values.copy() for name, values in DEFAULT_STREAM_PROFILES.items()}
+        for profile_name in ("low", "mid", "high"):
+            override = parsed.get(profile_name)
+            if isinstance(override, dict):
+                for key in merged[profile_name].keys():
+                    val = override.get(key)
+                    if val is not None:
+                        merged[profile_name][key] = str(val)
+        return merged
+    except Exception:
+        return DEFAULT_STREAM_PROFILES
+
+
+def _load_site_bandwidth_mode() -> str:
+    """
+    Read site bandwidth mode from env.
+    Supported: constrained, balanced, quality.
+    Defaults to balanced for compatibility.
+    """
+    mode = (os.environ.get("IVELY_SITE_BANDWIDTH_MODE") or "").strip().lower()
+    if mode in ("constrained", "balanced", "quality"):
+        return mode
+    return "balanced"
+
+
+def _profiles_for_mode(mode: str) -> Tuple[List[str], str]:
+    """
+    Return (enabled_profiles, default_profile) for the given site mode.
+    """
+    if mode == "constrained":
+        return (["low", "mid"], "low")
+    if mode == "quality":
+        return (["mid", "high"], "high")
+    return (["low", "mid", "high"], "mid")
+
+
+def _ffmpeg_transcode_publish_command(
+    rtsp_input_url: str, profile: Dict[str, str]
+) -> str:
     """
     FFmpeg pulls camera RTSP (H.265/H.264/MJPEG, etc.) and publishes H.264 to this MediaMTX path
     via RTSP (publisher). Output is browser-safe: yuv420p, short GOP, no B-frames (WebRTC/HLS friendly).
@@ -274,6 +393,12 @@ def _ffmpeg_transcode_publish_command(rtsp_input_url: str) -> str:
             "main",
             "-bf",
             "0",
+            "-b:v",
+            profile["bitrate"],
+            "-maxrate",
+            profile["maxrate"],
+            "-bufsize",
+            profile["bufsize"],
         ]
     else:
         venc = [
@@ -289,6 +414,12 @@ def _ffmpeg_transcode_publish_command(rtsp_input_url: str) -> str:
             "4.1",
             "-bf",
             "0",
+            "-b:v",
+            profile["bitrate"],
+            "-maxrate",
+            profile["maxrate"],
+            "-bufsize",
+            profile["bufsize"],
         ]
 
     parts = [
@@ -308,10 +439,14 @@ def _ffmpeg_transcode_publish_command(rtsp_input_url: str) -> str:
         "0:v:0",
         "-an",
         *venc,
+        "-vf",
+        f"scale={profile['width']}:{profile['height']}:force_original_aspect_ratio=decrease",
+        "-r",
+        profile["fps"],
         "-g",
-        "50",
+        profile["gop"],
         "-keyint_min",
-        "25",
+        profile["keyint_min"],
         "-sc_threshold",
         "0",
         "-pix_fmt",
@@ -331,7 +466,7 @@ def generate(
     vault_path: str = "/opt/ively/agent/camera.vault",
     manufacturer_override: Optional[str] = None,
 ):
-    """Generate mediamtx.yml from discovered cameras. Only _low paths are generated."""
+    """Generate mediamtx.yml from discovered cameras with mode-aware profile paths."""
     if username is None or password is None:
         username, password = _load_credentials(vault_path)
     if not username:
@@ -361,6 +496,9 @@ webrtc: no
 paths:
 """
     camera_index = 1
+    stream_profiles = _load_stream_profiles()
+    site_mode = _load_site_bandwidth_mode()
+    enabled_profiles, default_profile = _profiles_for_mode(site_mode)
     for c in cams:
         ip = c["ip"]
         model = c.get("model", "")
@@ -376,14 +514,39 @@ paths:
             channel_list = list(range(1, channels_count + 1))
 
         for ch in channel_list:
-            low_url = _rtsp_low_url(
+            low_source_url = _rtsp_low_url(
                 ip, model, username, password, manufacturer_override, channel=str(ch)
             )
-            low_cmd = _ffmpeg_transcode_publish_command(low_url)
+            main_source_url = _rtsp_main_url(
+                ip, model, username, password, manufacturer_override, channel=str(ch)
+            )
+            profile_commands = {
+                "low": _ffmpeg_transcode_publish_command(
+                    low_source_url, stream_profiles["low"]
+                ),
+                "mid": _ffmpeg_transcode_publish_command(
+                    low_source_url, stream_profiles["mid"]
+                ),
+                "high": _ffmpeg_transcode_publish_command(
+                    main_source_url, stream_profiles["high"]
+                ),
+            }
+            default_cmd = profile_commands[default_profile]
+
             cfg += f"""
-  {path_label}cam{camera_index}_low:
+  {path_label}cam{camera_index}:
     source: publisher
-    runOnDemand: {low_cmd}
+    # Mode '{site_mode}' default profile: {default_profile}
+    runOnDemand: {default_cmd}
+    runOnDemandRestart: yes
+    runOnDemandStartTimeout: 35s
+    runOnDemandCloseAfter: 15s
+"""
+            for profile_name in enabled_profiles:
+                cfg += f"""
+  {path_label}cam{camera_index}_{profile_name}:
+    source: publisher
+    runOnDemand: {profile_commands[profile_name]}
     runOnDemandRestart: yes
     runOnDemandStartTimeout: 35s
     runOnDemandCloseAfter: 15s
