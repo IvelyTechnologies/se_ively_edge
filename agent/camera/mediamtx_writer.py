@@ -253,17 +253,41 @@ def _ffmpeg_input_shell_quoted(rtsp_input_url: str) -> str:
     return f'"{esc}"'
 
 
+def _use_low_latency_rtsp_input_flags() -> bool:
+    """
+    Opt-in for aggressive RTSP low-latency input flags.
+    Disabled by default since some HEVC cameras become unstable with dropped refs.
+    """
+    v = (os.environ.get("IVELY_FFMPEG_LOW_LATENCY_INPUT") or "").strip().lower()
+    return v in ("1", "true", "yes")
+
+
+def _use_discard_corrupt_packets() -> bool:
+    """
+    Drop corrupt input packets for smoother output on unstable camera links.
+    Enabled by default; set IVELY_FFMPEG_DISCARD_CORRUPT=0 to disable.
+    """
+    v = (os.environ.get("IVELY_FFMPEG_DISCARD_CORRUPT") or "").strip().lower()
+    return v not in ("0", "false", "no")
+
+
+def _use_ultra_low_profile() -> bool:
+    """Enable extra-conservative encoder profile for very weak links."""
+    v = (os.environ.get("IVELY_STREAM_ULTRA_LOW") or "").strip().lower()
+    return v in ("1", "true", "yes")
+
+
 DEFAULT_STREAM_PROFILES: Dict[str, Dict[str, str]] = {
-    # Single path per camera (`camN_low`): substream in, H.264 out; tuned for bandwidth and latency.
+    # Single path per camera (`camN_low`): conservative defaults for unstable / low-bandwidth links.
     "low": {
-        "width": "640",
-        "height": "360",
-        "fps": "10",
-        "bitrate": "450k",
-        "maxrate": "500k",
-        "bufsize": "1000k",
-        "gop": "20",
-        "keyint_min": "10",
+        "width": "480",
+        "height": "270",
+        "fps": "8",
+        "bitrate": "300k",
+        "maxrate": "350k",
+        "bufsize": "700k",
+        "gop": "16",
+        "keyint_min": "8",
     },
 }
 
@@ -273,14 +297,28 @@ def _load_stream_profiles() -> Dict[str, Dict[str, str]]:
     Load encoder profile overrides from IVELY_STREAM_PROFILES_JSON.
     Must be a JSON object like: {"low": {"fps": "8", "bitrate": "350k"}}
     """
+    merged = {name: values.copy() for name, values in DEFAULT_STREAM_PROFILES.items()}
+    if _use_ultra_low_profile():
+        merged["low"].update(
+            {
+                "width": "426",
+                "height": "240",
+                "fps": "6",
+                "bitrate": "220k",
+                "maxrate": "260k",
+                "bufsize": "520k",
+                "gop": "12",
+                "keyint_min": "6",
+            }
+        )
+
     raw = (os.environ.get("IVELY_STREAM_PROFILES_JSON") or "").strip()
     if not raw:
-        return DEFAULT_STREAM_PROFILES
+        return merged
     try:
         parsed = json.loads(raw)
         if not isinstance(parsed, dict):
-            return DEFAULT_STREAM_PROFILES
-        merged = {name: values.copy() for name, values in DEFAULT_STREAM_PROFILES.items()}
+            return merged
         override = parsed.get("low")
         if isinstance(override, dict):
             for key in merged["low"].keys():
@@ -289,7 +327,7 @@ def _load_stream_profiles() -> Dict[str, Dict[str, str]]:
                     merged["low"][key] = str(val)
         return merged
     except Exception:
-        return DEFAULT_STREAM_PROFILES
+        return merged
 
 
 def _ffmpeg_transcode_publish_command(
@@ -342,7 +380,16 @@ def _ffmpeg_transcode_publish_command(
             profile["maxrate"],
             "-bufsize",
             profile["bufsize"],
+            "-x264-params",
+            "repeat-headers=1:aud=1:nal-hrd=cbr",
         ]
+
+    input_flags = []
+    if _use_discard_corrupt_packets():
+        input_flags.extend(["-fflags", "+discardcorrupt"])
+    if _use_low_latency_rtsp_input_flags():
+        # Keep this opt-in: can reduce latency, but may increase decode instability on HEVC sources.
+        input_flags.extend(["-fflags", "nobuffer", "-flags", "low_delay"])
 
     parts = [
         "ffmpeg",
@@ -351,10 +398,7 @@ def _ffmpeg_transcode_publish_command(
         "error",
         "-rtsp_transport",
         "tcp",
-        "-fflags",
-        "nobuffer",
-        "-flags",
-        "low_delay",
+        *input_flags,
         "-i",
         quoted_in,
         "-map",
@@ -446,7 +490,7 @@ paths:
     runOnDemand: {low_cmd}
     runOnDemandRestart: yes
     runOnDemandStartTimeout: 35s
-    runOnDemandCloseAfter: 15s
+    runOnDemandCloseAfter: 60s
 """
             camera_index += 1
     os.makedirs(os.path.dirname(config_path), exist_ok=True)

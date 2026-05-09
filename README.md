@@ -301,6 +301,55 @@ rtsp://10.20.0.x:8554/customer_site_cam1_low
 | Logs: Failed to resolve hostname my_camera | Phase 4 | Replace `/opt/ively/mediamtx/mediamtx.yml` with minimal config (no placeholder paths); restart `mediamtx`. |
 | No streams / empty list | Phase 4 / 5 | Cameras on same LAN? Run **Rediscover cameras** from :8080/provisioned or :2025. Check camera credentials in provision form. |
 
+### 13. Stable stream mode (low internet / packet loss)
+
+If camera feed is unstable in AI backend (freezing, frame jumps, HEVC decode warnings), use this stability-first setup on the edge device.
+
+**What the generator already does now (default):**
+
+- Generates one stream path per camera: `customer_site_camN_low`
+- Uses conservative H.264 transcode settings
+- Enables corrupt-packet tolerance: `-fflags +discardcorrupt`
+- Uses longer `runOnDemandCloseAfter` to avoid stream flapping
+
+**Recommended env toggles (on edge device):**
+
+```bash
+# Enable extra-conservative profile for weak links
+export IVELY_STREAM_ULTRA_LOW=1
+
+# Keep corrupt packet dropping enabled (default is enabled)
+export IVELY_FFMPEG_DISCARD_CORRUPT=1
+
+# Keep low-latency input mode OFF for stability (default is off)
+export IVELY_FFMPEG_LOW_LATENCY_INPUT=0
+```
+
+**Optional custom low profile (override exact values):**
+
+```bash
+export IVELY_STREAM_PROFILES_JSON='{"low":{"width":"426","height":"240","fps":"6","bitrate":"220k","maxrate":"260k","bufsize":"520k","gop":"12","keyint_min":"6"}}'
+```
+
+**Apply and verify:**
+
+```bash
+# 1) Regenerate mediamtx.yml from latest code (or use Rediscover cameras)
+cd /opt/ively/edge
+PYTHONPATH=/opt/ively/edge /opt/ively/venv/bin/python3 -c "from agent.camera.mediamtx_writer import generate; generate([])"
+
+# 2) Restart MediaMTX
+sudo systemctl restart mediamtx
+
+# 3) Check generated command/path
+sudo grep -n "cam1_low\\|discardcorrupt\\|runOnDemandCloseAfter" /opt/ively/mediamtx/mediamtx.yml
+
+# 4) Watch runtime logs
+sudo journalctl -u mediamtx -f
+```
+
+**Note:** If you still need lower latency and want to test it, set `IVELY_FFMPEG_LOW_LATENCY_INPUT=1`. This may reduce latency but can reduce stability on some HEVC camera models.
+
 ---
 
 ## Features (overview)
