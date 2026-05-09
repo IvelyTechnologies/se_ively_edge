@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import urllib.parse
 from typing import Dict, Optional
 
@@ -448,6 +449,54 @@ def _ffmpeg_transcode_publish_command(
     return " ".join(parts)
 
 
+def _cam_sort_key(cam: dict) -> tuple[str, str, str]:
+    """Stable camera ordering avoids path renumbering churn across rediscovery runs."""
+    return (
+        str(cam.get("ip", "")),
+        str(cam.get("model", "")),
+        str(cam.get("channels", 1)),
+    )
+
+
+def _channel_sort_key(ch: object) -> tuple[int, str]:
+    """
+    Sort channels numerically when possible; fallback to string order.
+    Keeps generated path names stable.
+    """
+    try:
+        return (0, f"{int(ch):09d}")
+    except Exception:
+        return (1, str(ch))
+
+
+def _write_if_changed_atomic(config_path: str, content: str) -> bool:
+    """
+    Write config only when content changed.
+    Returns True if file was updated, False if unchanged.
+    """
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            if f.read() == content:
+                return False
+    except FileNotFoundError:
+        pass
+
+    parent = os.path.dirname(config_path) or "."
+    os.makedirs(parent, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".mediamtx.", suffix=".yml", dir=parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tf:
+            tf.write(content)
+        os.replace(tmp_path, config_path)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+    return True
+
+
 def generate(
     cams,
     config_path: str = "/opt/ively/mediamtx/mediamtx.yml",
@@ -455,8 +504,11 @@ def generate(
     password: Optional[str] = None,
     vault_path: str = "/opt/ively/agent/camera.vault",
     manufacturer_override: Optional[str] = None,
-):
-    """Generate mediamtx.yml: one publisher path per camera stream (`camN_low` only)."""
+) -> bool:
+    """
+    Generate mediamtx.yml: one publisher path per camera stream (`camN_low` only).
+    Returns True if config file content changed, else False.
+    """
     if username is None or password is None:
         username, password = _load_credentials(vault_path)
     if not username:
@@ -492,7 +544,7 @@ paths:
 """
     camera_index = 1
     stream_profiles = _load_stream_profiles()
-    for c in cams:
+    for c in sorted(cams, key=_cam_sort_key):
         ip = c["ip"]
         model = c.get("model", "")
 
@@ -501,7 +553,7 @@ paths:
         #   - "channels": 4                (from auto-discovery count)
         selected_channels = c.get("selected_channels")
         if selected_channels:
-            channel_list = selected_channels
+            channel_list = sorted(selected_channels, key=_channel_sort_key)
         else:
             channels_count = c.get("channels", 1)
             channel_list = list(range(1, channels_count + 1))
@@ -522,6 +574,9 @@ paths:
     runOnDemandCloseAfter: 60s
 """
             camera_index += 1
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(cfg)
+    changed = _write_if_changed_atomic(config_path, cfg)
+    if changed:
+        print("MediaMTX config updated:", config_path)
+    else:
+        print("MediaMTX config unchanged:", config_path)
+    return changed
