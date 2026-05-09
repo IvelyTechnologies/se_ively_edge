@@ -277,6 +277,35 @@ def _use_ultra_low_profile() -> bool:
     return v in ("1", "true", "yes")
 
 
+def _ffmpeg_input_flags() -> list[str]:
+    """
+    Build robust FFmpeg input flags for unstable RTSP/HEVC camera links.
+    Default prioritizes continuity over minimum latency.
+    """
+    fflags = ["+genpts"]
+    if _use_discard_corrupt_packets():
+        fflags.append("+discardcorrupt")
+    if _use_low_latency_rtsp_input_flags():
+        # Optional: lower latency, but can reduce decoder robustness on some HEVC cameras.
+        fflags.append("nobuffer")
+
+    flags = [
+        "-rtsp_flags",
+        "prefer_tcp",
+        "-fflags",
+        "".join(fflags),
+        # Keep larger reordering tolerance for jittery links.
+        "-reorder_queue_size",
+        "1024",
+        # Limit demuxer waiting to avoid long stalls.
+        "-max_delay",
+        "500000",
+    ]
+    if _use_low_latency_rtsp_input_flags():
+        flags.extend(["-flags", "low_delay"])
+    return flags
+
+
 DEFAULT_STREAM_PROFILES: Dict[str, Dict[str, str]] = {
     # Single path per camera (`camN_low`): conservative defaults for unstable / low-bandwidth links.
     "low": {
@@ -384,12 +413,7 @@ def _ffmpeg_transcode_publish_command(
             "repeat-headers=1:aud=1:nal-hrd=cbr",
         ]
 
-    input_flags = []
-    if _use_discard_corrupt_packets():
-        input_flags.extend(["-fflags", "+discardcorrupt"])
-    if _use_low_latency_rtsp_input_flags():
-        # Keep this opt-in: can reduce latency, but may increase decode instability on HEVC sources.
-        input_flags.extend(["-fflags", "nobuffer", "-flags", "low_delay"])
+    input_flags = _ffmpeg_input_flags()
 
     parts = [
         "ffmpeg",
