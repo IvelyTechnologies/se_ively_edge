@@ -477,6 +477,11 @@ rtspAddress: :8554
 # HLS server
 hls: yes
 hlsAddress: :8888
+# Stability-first HLS for non-browser FFmpeg/OpenCV clients
+hlsVariant: mpegts
+hlsAlwaysRemux: yes
+hlsSegmentDuration: 2s
+hlsSegmentCount: 8
 
 # WebRTC disabled
 webrtc: no
