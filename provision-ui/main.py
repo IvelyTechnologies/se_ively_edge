@@ -365,12 +365,15 @@ def _provisioned_info():
         pass
     if MEDIAMTX_CONFIG.exists():
         try:
-            text = MEDIAMTX_CONFIG.read_text(encoding="utf-8")
-            _NON_STREAM = {"paths", "rtsp", "hls", "webrtc", "api", "record", "metrics"}
-            info["cameras"] = [
-                p for p in re.findall(r"^\s+([a-zA-Z0-9_]+):\s*$", text, re.MULTILINE)
-                if p.lower() not in _NON_STREAM
-            ]
+            import yaml
+            data = yaml.safe_load(MEDIAMTX_CONFIG.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                paths_section = data.get("paths")
+                if isinstance(paths_section, dict):
+                    _NON_STREAM = {"paths", "rtsp", "hls", "webrtc", "api", "record", "metrics"}
+                    info["cameras"] = [
+                        k for k in paths_section if k.lower() not in _NON_STREAM
+                    ]
         except Exception:
             pass
     return info

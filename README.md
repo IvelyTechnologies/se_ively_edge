@@ -70,7 +70,7 @@ End-to-end flow from preparing the device to a working, provisioned edge with st
 **If streams don't load:**
 
 - Ensure cameras are on the same LAN and ONVIF discovery found them. Use **Rediscover cameras** on the provisioned page if you added cameras later.
-- Check MediaMTX: `sudo systemctl status mediamtx` and `sudo journalctl -u mediamtx -n 30 --no-pager`. If you see "Failed to resolve hostname my_camera", replace `mediamtx.yml` with a minimal config (see README troubleshooting) and restart MediaMTX.
+- Check Edge Diagnostics: Live stream workers are persistent now. Look at UI diagnostics or check `curl http://localhost:8080/metrics` to identify frozen streams or disconnected endpoints.
 
 ### Phase 5 — Add a camera later (no full setup)
 
@@ -180,6 +180,7 @@ You do **not** need to run Provision setup again.
 | **8080/provisioned** | Provisioned device & cameras table | http://&lt;device-ip&gt;:8080/provisioned |
 | **8080/vpn-status** | WireGuard VPN status (JSON) | http://&lt;device-ip&gt;:8080/vpn-status |
 | **8889** | MediaMTX WebRTC (used by stream viewer) | — |
+| **8189** | WebRTC internal UDP/TCP routing ports | — |
 | **51820/udp** | WireGuard VPN tunnel | — |
 
 ### 8. If Provision UI (port 2025) does not load
@@ -298,57 +299,36 @@ rtsp://10.20.0.x:8554/customer_site_cam1_low
 | Provision fails: cannot reach cloud | Phase 3 | Verify Cloud URL (IP or hostname), network from edge to cloud, firewall. |
 | VPN not connected / no handshake | Phase 3 / 4 | `sudo wg show`, `sudo wg-quick down wg0 && sudo wg-quick up wg0`. Check cloud WG server is running. |
 | Agent crashes: camera.vault not found | Phase 4 | Normal if agent starts before provisioning. After provisioning, vault is created. Restart agent. |
-| Logs: Failed to resolve hostname my_camera | Phase 4 | Replace `/opt/ively/mediamtx/mediamtx.yml` with minimal config (no placeholder paths); restart `mediamtx`. |
+| MediaMTX crashes without workers | Phase 4 | MediaMTX config may contain bad paths; check `/opt/ively/mediamtx/mediamtx.yml` (all sources should be `publisher`). |
 | No streams / empty list | Phase 4 / 5 | Cameras on same LAN? Run **Rediscover cameras** from :8080/provisioned or :2025. Check camera credentials in provision form. |
 
-### 13. Stable stream mode (low internet / packet loss)
+### 13. Enterprise Edge Architecture (Observability & Self-Healing)
 
-If camera feed is unstable in AI backend (freezing, frame jumps, HEVC decode warnings), use this stability-first setup on the edge device.
+The edge system now natively runs an **Enterprise Worker Architecture** prioritizing extreme stream stability and low latency. It abandons `runOnDemand` pulling and replaces it with persistent per-camera processes.
 
-**What the generator already does now (default):**
+**Key Operations Mechanisms:**
 
-- Generates one stream path per camera: `customer_site_camN_low`
-- Uses conservative H.264 transcode settings
-- Enables corrupt-packet tolerance: `-fflags +discardcorrupt`
-- Uses longer `runOnDemandCloseAfter` to avoid stream flapping
+- **Persistent Processes**: The `ively-agent` (`CameraWorkerManager`) runs a persistent `ffmpeg` process per camera. These push to MediaMTX. No more reconnect storms due to MediaMTX tearing down idle listeners.
+- **Deep Freeze Detection**: The local watchdog scans local streaming pipes for locked bitrates, delayed/stalled frame decoding, and low FPS counts. If a stream freezes, the agent restarts *only* the single broken worker, leaving all other 99 cameras online.
+- **SQLite Database Metrics**: CPU, memory, Disk percentage, WireGuard Tunnel heartbeats, individual stream FPS, reconnects, and bitrates are synced every 30 seconds to `/opt/ively/agent/metrics.db` (retention: 7 days).
+- **WebRTC Enabled by Default**: MediaMTX is bound out-of-the-box with Google's STUN for millisecond latency on the `http://<device-ip>:8080/view` dashboard.
 
-**Recommended env toggles (on edge device):**
-
-```bash
-# Enable extra-conservative profile for weak links
-export IVELY_STREAM_ULTRA_LOW=1
-
-# Keep corrupt packet dropping enabled (default is enabled)
-export IVELY_FFMPEG_DISCARD_CORRUPT=1
-
-# Keep low-latency input mode OFF for stability (default is off)
-export IVELY_FFMPEG_LOW_LATENCY_INPUT=0
-```
-
-**Optional custom low profile (override exact values):**
+**How to observe the health API (JSON):**
 
 ```bash
-export IVELY_STREAM_PROFILES_JSON='{"low":{"width":"426","height":"240","fps":"6","bitrate":"220k","maxrate":"260k","bufsize":"520k","gop":"12","keyint_min":"6"}}'
+# General real-time stream status and diagnostics
+curl -s http://localhost:8080/metrics | jq .
 ```
 
-**Apply and verify:**
+**Troubleshooting New Edge Workers:**
 
-```bash
-# 1) Regenerate mediamtx.yml from latest code (or use Rediscover cameras)
-cd /opt/ively/edge
-PYTHONPATH=/opt/ively/edge /opt/ively/venv/bin/python3 -c "from agent.camera.mediamtx_writer import generate; generate([])"
-
-# 2) Restart MediaMTX
-sudo systemctl restart mediamtx
-
-# 3) Check generated command/path
-sudo grep -n "cam1_low\\|discardcorrupt\\|runOnDemandCloseAfter" /opt/ively/mediamtx/mediamtx.yml
-
-# 4) Watch runtime logs
-sudo journalctl -u mediamtx -f
-```
-
-**Note:** If you still need lower latency and want to test it, set `IVELY_FFMPEG_LOW_LATENCY_INPUT=1`. This may reduce latency but can reduce stability on some HEVC camera models.
+| Symptom | Cause & Action |
+|---------|----------------|
+| `curl` metrics shows camera status `frozen` or `stalled` | The stream is broken at the source or the camera crashed. The `watchdog` will auto-restart the individual worker. If it hits max restarts (default: 3), it enters a cooldown. Check the camera physical network connection. |
+| Camera stuck in `cooldown` | Worker crashed >3 times within 5 minutes. The system is protecting CPU from spin loops. It will automatically try again after the cooldown window expires. |
+| MediaMTX logs show no activity | This is normal! Subprocesses handle fetching. To view actual camera stream health logs, check the agent trace: `sudo journalctl -u ively-agent -f`. Look for lines tagged `[worker:cam1_low]`. |
+| Want to manually clear a cooldown? | Rather than restarting MediaMTX (which drops all feeds), restart the agent which flushes the manager's restart tracker: `sudo systemctl restart ively-agent`. |
+| `metrics.db` size growing too large? | The agent auto-prunes records older than 7 days per loop. No manual cleanup is required. |
 
 ---
 
@@ -359,11 +339,11 @@ sudo journalctl -u mediamtx -f
 - **Web provisioning UI** – Browser-based setup (port 2025)
 - **Device registration** – Registers with the cloud and receives a device ID + VPN config
 - **ONVIF auto discovery** – Scans the LAN for IP cameras
-- **MediaMTX** – RTSP → WebRTC; config generated from discovered cameras
+- **MediaMTX & Persistent Workers** – RTSP → HLS/WebRTC pipeline using robust, self-healing workers
 - **Provisioned device table** – View Device ID, Customer, Site, VPN status, cameras (port 8080/provisioned or 2025 when already provisioned)
 - **Rediscover cameras** – Add new cameras without running full setup again
 - **systemd services** – `ively-agent`, `mediamtx`, `ively-provision`, `wg-quick@wg0`
-- **Self-healing** – Watchdog restarts services + VPN tunnel, re-discovers cameras, recovers from internet loss
+- **Self-healing Enterprise Watchdog** – Restarts isolated camera workers instantly upon frozen packets without disrupting the global multi-tenant site cluster.
 - **OTA updates** – From the cloud; see [docs/OTA_CLOUD.md](docs/OTA_CLOUD.md)
 - **Remote VPN management** – Cloud can query status, restart tunnel, push new config via WebSocket
 

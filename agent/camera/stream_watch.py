@@ -1,25 +1,34 @@
-# stream watch — detect RTSP freeze and trigger MediaMTX restart
+# stream watch — per-camera health checking using proper YAML parsing
+#
+# Replaces the old approach of checking only the first stream with ffprobe
+# and restarting all of MediaMTX. Now checks all cameras individually and
+# integrates with CameraWorkerManager for per-camera restart.
 
-import re
 import subprocess
-from typing import Optional
+from typing import Dict, List, Optional
+
+import yaml
+
+from agent.config import MEDIAMTX_CONFIG
 
 
-def _first_rtsp_from_config(config_path: str = "/opt/ively/mediamtx/mediamtx.yml") -> Optional[str]:
-    """Read first camera RTSP URL from mediamtx.yml (direct source or FFmpeg -i input)."""
+def load_stream_paths(config_path: str = str(MEDIAMTX_CONFIG)) -> List[str]:
+    """
+    Read stream path names from mediamtx.yml using proper YAML parsing.
+    Returns a list like ['customer_site_cam1_low', 'customer_site_cam2_low'].
+    """
+    _NON_STREAM = {"paths", "rtsp", "hls", "webrtc", "api", "record", "metrics"}
     try:
         with open(config_path, encoding="utf-8") as f:
-            content = f.read()
-    except OSError:
-        return None
-    m = re.search(r"source:\s*(rtsp://[^\s]+)", content)
-    if m:
-        return m.group(1).strip()
-    m = re.search(r"-i\s+'(rtsp://[^']+)'", content)
-    if m:
-        return m.group(1).strip()
-    m = re.search(r'-i\s+"(rtsp://[^"]+)"', content)
-    return m.group(1).strip() if m else None
+            data = yaml.safe_load(f)
+        if not isinstance(data, dict):
+            return []
+        paths_section = data.get("paths")
+        if not isinstance(paths_section, dict):
+            return []
+        return [k for k in paths_section if k.lower() not in _NON_STREAM]
+    except Exception:
+        return []
 
 
 def stream_ok(url: str, timeout_sec: float = 10.0) -> bool:
@@ -52,18 +61,30 @@ def stream_ok(url: str, timeout_sec: float = 10.0) -> bool:
         return False
 
 
-def check_cameras(config_path: str = "/opt/ively/mediamtx/mediamtx.yml") -> bool:
+def check_all_streams(
+    config_path: str = str(MEDIAMTX_CONFIG),
+    rtsp_port: int = 8554,
+    timeout_sec: float = 10.0,
+) -> Dict[str, bool]:
     """
-    Check first stream from config. If stuck, restart MediaMTX and return False.
-    Returns True if stream ok or no stream to check.
+    Check all streams from config individually.
+    Returns dict of {stream_name: is_ok}.
     """
-    url = _first_rtsp_from_config(config_path)
-    if not url:
-        return True
+    paths = load_stream_paths(config_path)
+    results = {}
+    for path in paths:
+        url = f"rtsp://127.0.0.1:{rtsp_port}/{path}"
+        results[path] = stream_ok(url, timeout_sec=timeout_sec)
+    return results
 
-    if stream_ok(url):
-        return True
 
-    print("Stream stuck → restarting MediaMTX")
-    subprocess.run(["systemctl", "restart", "mediamtx"], check=False, timeout=15)
-    return False
+def get_rtsp_urls_from_config(
+    config_path: str = str(MEDIAMTX_CONFIG),
+    rtsp_port: int = 8554,
+) -> Dict[str, str]:
+    """
+    Extract all stream RTSP URLs from mediamtx config.
+    Returns dict of {stream_name: rtsp_url}.
+    """
+    paths = load_stream_paths(config_path)
+    return {p: f"rtsp://127.0.0.1:{rtsp_port}/{p}" for p in paths}

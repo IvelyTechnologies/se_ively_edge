@@ -361,17 +361,24 @@ def _load_stream_profiles() -> Dict[str, Dict[str, str]]:
 
 
 def _ffmpeg_transcode_publish_command(
-    rtsp_input_url: str, profile: Dict[str, str]
+    rtsp_input_url: str,
+    profile: Dict[str, str],
+    publish_path: Optional[str] = None,
+    rtsp_port: int = 8554,
 ) -> str:
     """
     FFmpeg pulls camera RTSP (H.265/H.264/MJPEG, etc.) and publishes H.264 to this MediaMTX path
     via RTSP (publisher). Output is browser-safe: yuv420p, short GOP, no B-frames (WebRTC/HLS friendly).
 
-    Flags aligned with field-proven MediaMTX configs: -loglevel error, input TCP, no extra output
-    -rtsp_transport (MediaMTX sets publisher RTSP as needed).
+    When publish_path is provided, the command uses a resolved localhost URL
+    (for persistent CameraWorker mode). When None, uses the legacy
+    $RTSP_PORT/$MTX_PATH variables (for runOnDemand compatibility, unused).
     """
     quoted_in = _ffmpeg_input_shell_quoted(rtsp_input_url)
-    publish_to = "rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH"
+    if publish_path:
+        publish_to = f"rtsp://127.0.0.1:{rtsp_port}/{publish_path}"
+    else:
+        publish_to = "rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH"
 
     if _use_nvenc_encoder():
         venc = [
@@ -416,11 +423,15 @@ def _ffmpeg_transcode_publish_command(
 
     input_flags = _ffmpeg_input_flags()
 
+    # Use -progress pipe:2 to send machine-readable progress to stderr
+    # for the freeze detector to parse (frame count, FPS, bitrate).
     parts = [
         "ffmpeg",
         "-hide_banner",
         "-loglevel",
-        "error",
+        "repeat+warning",
+        "-progress",
+        "pipe:2",
         "-rtsp_transport",
         "tcp",
         *input_flags,
@@ -507,6 +518,11 @@ def generate(
 ) -> bool:
     """
     Generate mediamtx.yml: one publisher path per camera stream (`camN_low` only).
+
+    Paths use `source: publisher` — FFmpeg is managed by CameraWorkerManager,
+    NOT by MediaMTX runOnDemand. This prevents stream teardown when no consumer
+    is watching, eliminates reconnect storms, and allows per-camera restart.
+
     Returns True if config file content changed, else False.
     """
     if username is None or password is None:
@@ -521,7 +537,11 @@ def generate(
     prefix = _path_prefix()
     path_label = f"{prefix}_" if prefix else ""
 
-    cfg = """# --- Protocol Configuration ---
+    cfg = """# --- Ively SmartEye Edge — MediaMTX Configuration ---
+# Auto-generated — do not edit manually.
+# FFmpeg workers are managed by ively-agent (CameraWorkerManager),
+# NOT by MediaMTX runOnDemand.
+
 # RTSP server
 rtsp: yes
 rtspAddress: :8554
@@ -535,10 +555,18 @@ hlsAlwaysRemux: yes
 hlsSegmentDuration: 2s
 hlsSegmentCount: 8
 
-# WebRTC disabled
-webrtc: no
+# WebRTC — enabled for low-latency browser viewing
+# Relayed through WireGuard tunnel to cloud MediaMTX → browser.
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: yes
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
 
-# Camera paths use FFmpeg to publish H.264 (browser-safe for HLS). Source may be H.265/HEVC.
+# Camera paths — FFmpeg publishes H.264 (browser-safe for HLS/WebRTC).
+# Source may be H.265/HEVC from camera; FFmpeg transcodes.
 
 paths:
 """
@@ -559,19 +587,11 @@ paths:
             channel_list = list(range(1, channels_count + 1))
 
         for ch in channel_list:
-            low_source_url = _rtsp_low_url(
-                ip, model, username, password, manufacturer_override, channel=str(ch)
-            )
-            low_cmd = _ffmpeg_transcode_publish_command(
-                low_source_url, stream_profiles["low"]
-            )
+            # Persistent worker mode: source=publisher, no runOnDemand.
+            # CameraWorkerManager owns the FFmpeg lifecycle.
             cfg += f"""
   {path_label}cam{camera_index}_low:
     source: publisher
-    runOnDemand: {low_cmd}
-    runOnDemandRestart: yes
-    runOnDemandStartTimeout: 35s
-    runOnDemandCloseAfter: 60s
 """
             camera_index += 1
     changed = _write_if_changed_atomic(config_path, cfg)
@@ -580,3 +600,65 @@ paths:
     else:
         print("MediaMTX config unchanged:", config_path)
     return changed
+
+
+def generate_worker_configs(
+    cams,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    vault_path: str = "/opt/ively/agent/camera.vault",
+    manufacturer_override: Optional[str] = None,
+    rtsp_port: int = 8554,
+) -> list:
+    """
+    Generate per-camera FFmpeg commands for CameraWorkerManager.
+
+    Returns a list of dicts:
+      [{"stream_name": "...", "ffmpeg_cmd": "...", "expected_fps": 8.0}, ...]
+    """
+    if username is None or password is None:
+        username, password = _load_credentials(vault_path)
+    if not username:
+        username = ""
+    if not password:
+        password = ""
+    if manufacturer_override is None:
+        manufacturer_override = _load_manufacturer_override()
+
+    prefix = _path_prefix()
+    path_label = f"{prefix}_" if prefix else ""
+
+    configs = []
+    camera_index = 1
+    stream_profiles = _load_stream_profiles()
+
+    for c in sorted(cams, key=_cam_sort_key):
+        ip = c["ip"]
+        model = c.get("model", "")
+
+        selected_channels = c.get("selected_channels")
+        if selected_channels:
+            channel_list = sorted(selected_channels, key=_channel_sort_key)
+        else:
+            channels_count = c.get("channels", 1)
+            channel_list = list(range(1, channels_count + 1))
+
+        for ch in channel_list:
+            stream_name = f"{path_label}cam{camera_index}_low"
+            low_source_url = _rtsp_low_url(
+                ip, model, username, password, manufacturer_override, channel=str(ch)
+            )
+            ffmpeg_cmd = _ffmpeg_transcode_publish_command(
+                low_source_url,
+                stream_profiles["low"],
+                publish_path=stream_name,
+                rtsp_port=rtsp_port,
+            )
+            configs.append({
+                "stream_name": stream_name,
+                "ffmpeg_cmd": ffmpeg_cmd,
+                "expected_fps": float(stream_profiles["low"]["fps"]),
+            })
+            camera_index += 1
+
+    return configs

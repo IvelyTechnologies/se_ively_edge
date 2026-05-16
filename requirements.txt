@@ -8,3 +8,4 @@ psutil
 onvif-zeep
 cryptography
 opencv-python-headless
+pyyaml

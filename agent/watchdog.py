@@ -1,10 +1,17 @@
-# self-healing watchdog — service health, stream, disk, internet, VPN, re-discovery
+# self-healing watchdog — per-camera worker health, service health, disk, internet, VPN, re-discovery
+#
+# Enterprise-grade watchdog that:
+#   - Restarts ONLY failed camera workers (never all of MediaMTX)
+#   - Enforces restart cooldown to prevent restart storms
+#   - Monitors WireGuard VPN tunnel health
+#   - Handles internet recovery gracefully
+#   - Periodically re-discovers cameras
 
 import os
 import subprocess
 import sys
 import time
-from typing import Callable
+from typing import Optional
 
 import psutil
 
@@ -14,23 +21,36 @@ try:
 except Exception:
     pass
 
+from agent.config import (
+    WATCHDOG_INTERVAL_SEC,
+    DISCOVERY_INTERVAL_SEC,
+    CPU_THRESHOLD,
+    DISK_THRESHOLD,
+)
+
 _CLOUD_URL = (os.getenv("CLOUD_URL") or "cloud.ively.ai").strip().replace("https://", "").replace("http://", "").strip("/")
 
-# Optional: only use if agent has these modules on path
-try:
-    from agent.camera.stream_watch import check_cameras
-except ImportError:
-    check_cameras = None
+# Camera worker manager (injected from main.py)
+_worker_manager = None
 
-try:
-    from agent.disk_manager import cleanup as disk_cleanup
-except ImportError:
-    disk_cleanup = None
 
+def set_worker_manager(manager) -> None:
+    """Called by main.py to inject the CameraWorkerManager instance."""
+    global _worker_manager
+    _worker_manager = manager
+
+
+# Optional: camera discovery
 try:
     from agent.camera.discover import run as run_discovery
 except ImportError:
     run_discovery = None
+
+# Optional: disk cleanup
+try:
+    from agent.disk_manager import cleanup as disk_cleanup
+except ImportError:
+    disk_cleanup = None
 
 # WireGuard tunnel health
 try:
@@ -68,8 +88,8 @@ def check_service(name: str) -> bool:
     return r.returncode == 0 and "active" in (r.stdout or "").lower()
 
 
-def restart(name: str) -> None:
-    print("Restarting", name)
+def restart_service(name: str) -> None:
+    print(f"[watchdog] Restarting service: {name}")
     subprocess.run(["systemctl", "restart", name], timeout=15, check=False)
 
 
@@ -84,45 +104,74 @@ def _check_wireguard() -> None:
         return
 
     if not wg_is_up():
-        print("WireGuard interface down — restarting tunnel")
+        print("[watchdog] WireGuard interface down — restarting tunnel")
         wg_restart_tunnel()
         return
 
     if not wg_tunnel_healthy(max_handshake_age_sec=120):
-        print("WireGuard tunnel unhealthy (stale handshake) — restarting")
+        print("[watchdog] WireGuard tunnel unhealthy (stale handshake) — restarting")
         wg_restart_tunnel()
 
 
+def _check_camera_workers() -> None:
+    """
+    Check all camera workers and restart only those that are unhealthy.
+    This replaces the old approach of restarting all of MediaMTX.
+    """
+    if _worker_manager is None:
+        return
+
+    unhealthy = _worker_manager.health_check_all()
+    if unhealthy:
+        for name, status in unhealthy.items():
+            print(f"[watchdog] Camera {name}: {status}")
+
+
 def watchdog_loop(
-    interval_sec: int = 30,
-    discovery_interval_sec: int = 600,
-    cpu_threshold: float = 90.0,
-    disk_threshold: float = 85.0,
+    interval_sec: int = WATCHDOG_INTERVAL_SEC,
+    discovery_interval_sec: int = DISCOVERY_INTERVAL_SEC,
+    cpu_threshold: float = CPU_THRESHOLD,
+    disk_threshold: float = DISK_THRESHOLD,
 ) -> None:
     """
-    Main loop: check services, CPU, stream, disk, internet, VPN; run re-discovery periodically.
+    Main loop: check services, per-camera workers, CPU, disk,
+    internet, VPN; run re-discovery periodically.
+
+    Key difference from old watchdog:
+      - Camera health: restarts individual workers, NOT all of MediaMTX
+      - MediaMTX restart: ONLY if the process itself has crashed
+      - CPU protection: logs warning instead of blindly restarting MediaMTX
     """
     last_internet_ok = True
     last_discovery_time = 0.0
 
     while True:
         try:
-            # 1) Service health — MediaMTX & agent
+            # 1) Service health — MediaMTX process
+            #    Only restart MediaMTX if the process itself is dead.
+            #    Camera stream issues are handled by per-camera workers.
             if not check_service("mediamtx"):
-                restart("mediamtx")
-            if not check_service("ively-agent"):
-                restart("ively-agent")
+                restart_service("mediamtx")
+                # Give MediaMTX time to start before workers reconnect
+                time.sleep(5)
 
-            # 2) CPU protection — reduce load by restarting MediaMTX if CPU pegged
+            if not check_service("ively-agent"):
+                restart_service("ively-agent")
+
+            # 2) Per-camera worker health — restart ONLY failed workers
+            _check_camera_workers()
+
+            # 3) CPU monitoring — log warning, do NOT restart MediaMTX
             try:
-                if psutil.cpu_percent(interval=1) > cpu_threshold:
-                    restart("mediamtx")
+                cpu = psutil.cpu_percent(interval=1)
+                if cpu > cpu_threshold:
+                    print(
+                        f"[watchdog] High CPU: {cpu:.1f}% "
+                        f"(threshold: {cpu_threshold}%)"
+                    )
+                    # Future: could pause low-priority workers here
             except Exception:
                 pass
-
-            # 3) Stream watch — if first RTSP stream is stuck, restart MediaMTX
-            if check_cameras is not None:
-                check_cameras()
 
             # 4) Disk cleanup
             if disk_cleanup is not None:
@@ -131,11 +180,11 @@ def watchdog_loop(
             # 5) Internet recovery — when back online, force agent reconnect
             internet_ok = _internet_ok()
             if not last_internet_ok and internet_ok:
-                print("Internet back — restarting ively-agent")
-                restart("ively-agent")
+                print("[watchdog] Internet back — restarting ively-agent")
+                restart_service("ively-agent")
                 # Also restart WireGuard tunnel after internet recovery
                 if HAS_WIREGUARD and wg_load_state() is not None:
-                    print("Internet back — restarting WireGuard tunnel")
+                    print("[watchdog] Internet back — restarting WireGuard tunnel")
                     wg_restart_tunnel()
             last_internet_ok = internet_ok
 
@@ -149,9 +198,9 @@ def watchdog_loop(
                 try:
                     run_discovery()
                 except Exception as e:
-                    print("Re-discovery error:", e)
+                    print("[watchdog] Re-discovery error:", e)
 
         except Exception as e:
-            print("Watchdog error:", e, file=sys.stderr)
+            print("[watchdog] Error:", e, file=sys.stderr)
 
         time.sleep(interval_sec)

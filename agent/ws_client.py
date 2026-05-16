@@ -1,8 +1,12 @@
-# websocket client — cloud connection + command dispatch + heartbeat (includes VPN status)
+# websocket client — cloud connection + command dispatch + enhanced heartbeat
+#
+# Heartbeat now includes: version, VPN status, CPU, memory, disk,
+# camera health summary, uptime, and tunnel health.
 
 import asyncio
 import json
 import os
+import time
 
 import websockets
 from dotenv import load_dotenv
@@ -11,6 +15,8 @@ load_dotenv("/opt/ively/agent/.env")
 
 DEVICE = os.getenv("DEVICE_ID")
 CLOUD_URL = (os.getenv("CLOUD_URL") or "cloud.ively.ai").strip().replace("https://", "").replace("http://", "").strip("/")
+
+from agent.config import HEARTBEAT_INTERVAL_SEC
 
 try:
     from agent.ota.version import VERSION as EDGE_VERSION
@@ -28,6 +34,15 @@ try:
     HAS_WIREGUARD = True
 except ImportError:
     HAS_WIREGUARD = False
+
+# Camera worker manager (injected from main.py)
+_worker_manager = None
+
+
+def set_worker_manager(manager) -> None:
+    """Called by main.py to inject the CameraWorkerManager instance."""
+    global _worker_manager
+    _worker_manager = manager
 
 
 def _vpn_info() -> dict:
@@ -47,17 +62,64 @@ def _vpn_info() -> dict:
         return {"vpn": "error"}
 
 
+def _system_uptime() -> float:
+    """System uptime in seconds."""
+    try:
+        with open("/proc/uptime", "r") as f:
+            return float(f.readline().split()[0])
+    except Exception:
+        return 0.0
+
+
+def _system_metrics() -> dict:
+    """Collect CPU, memory, disk for heartbeat."""
+    try:
+        import psutil
+        return {
+            "cpu_percent": round(psutil.cpu_percent(interval=0), 1),
+            "memory_percent": round(psutil.virtual_memory().percent, 1),
+            "disk_percent": round(psutil.disk_usage("/").percent, 1),
+        }
+    except Exception:
+        return {}
+
+
+def _camera_summary() -> dict:
+    """Collect camera worker health summary for heartbeat."""
+    if _worker_manager is None:
+        return {}
+    try:
+        return _worker_manager.get_summary()
+    except Exception:
+        return {}
+
+
 async def _heartbeat(ws):
-    """Send periodic heartbeat so cloud can read device version, VPN status, and overall status."""
+    """
+    Send periodic heartbeat so cloud can read device health.
+
+    Enhanced payload includes:
+      - version, uptime
+      - VPN status + IP
+      - CPU, memory, disk percentages
+      - Camera health summary (total, active, unhealthy, in_cooldown)
+    """
     while True:
         try:
-            await asyncio.sleep(60)
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SEC)
             heartbeat = {
                 "type": "heartbeat",
                 "version": EDGE_VERSION,
+                "uptime": round(_system_uptime(), 0),
             }
-            # Include VPN info
+            # VPN info
             heartbeat.update(_vpn_info())
+            # System metrics
+            heartbeat.update(_system_metrics())
+            # Camera health
+            cameras = _camera_summary()
+            if cameras:
+                heartbeat["cameras"] = cameras
             await ws.send(json.dumps(heartbeat))
         except Exception:
             break

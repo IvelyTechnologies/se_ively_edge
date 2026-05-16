@@ -2,15 +2,15 @@
 
 import json
 import os
-import re
 import subprocess
 import sys
 import threading
 from pathlib import Path
 from typing import Optional
 
+import yaml
 from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 app = FastAPI()
 
@@ -25,6 +25,7 @@ except ImportError:
 # Protocol ports (match mediamtx_writer.py config)
 RTSP_PORT = 8554
 HLS_PORT = 8888
+WEBRTC_PORT = 8889
 
 EDGE_DIR = Path("/opt/ively/edge")
 AGENT_DIR = Path("/opt/ively/agent")
@@ -38,19 +39,29 @@ try:
 except ImportError:
     HAS_WIREGUARD = False
 
+# Camera worker manager (injected from main.py for metrics/status)
+_worker_manager = None
+
+
+def set_worker_manager(manager) -> None:
+    """Called by main.py to inject the CameraWorkerManager instance."""
+    global _worker_manager
+    _worker_manager = manager
+
 
 def _stream_paths():
-    """Read path names from mediamtx.yml so we can list them on the view page."""
+    """Read path names from mediamtx.yml using proper YAML parsing."""
     if not MEDIAMTX_CONFIG.exists():
         return []
     try:
-        text = MEDIAMTX_CONFIG.read_text(encoding="utf-8")
-        # Filter out YAML section headers / config keys that aren't actual streams
+        data = yaml.safe_load(MEDIAMTX_CONFIG.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return []
+        paths_section = data.get("paths")
+        if not isinstance(paths_section, dict):
+            return []
         _NON_STREAM = {"paths", "rtsp", "hls", "webrtc", "api", "record", "metrics"}
-        return [
-            p for p in re.findall(r"^\s+([a-zA-Z0-9_]+):\s*$", text, re.MULTILINE)
-            if p.lower() not in _NON_STREAM
-        ]
+        return [k for k in paths_section if k.lower() not in _NON_STREAM]
     except Exception:
         return []
 
@@ -333,7 +344,25 @@ def health():
     if vpn is not None:
         result["vpn"] = "connected" if vpn.get("interface_up") else "disconnected"
         result["vpn_ip"] = vpn.get("vpn_ip")
+    # Camera worker summary
+    if _worker_manager is not None:
+        result["cameras"] = _worker_manager.get_summary()
     return result
+
+
+@app.get("/metrics")
+def metrics_endpoint():
+    """JSON metrics for observability (per-camera + system health from SQLite)."""
+    try:
+        from agent.metrics import get_all_metrics_snapshot
+        data = get_all_metrics_snapshot()
+    except ImportError:
+        data = {}
+    # Also include live worker metrics if available
+    if _worker_manager is not None:
+        data["live_workers"] = _worker_manager.get_all_metrics()
+        data["summary"] = _worker_manager.get_summary()
+    return JSONResponse(data)
 
 
 def _provisioned_page_html(info: dict) -> str:
@@ -481,16 +510,18 @@ def view():
     <div class="stream-grid" id="stream-grid"></div>
 
     <p class="tip" style="margin-top: 1.5rem;">
-      <strong>HLS</strong> plays directly in the browser. <strong>RTSP</strong> URLs can be opened in VLC or any RTSP player.
+      <strong>HLS</strong> plays directly in the browser. <strong>WebRTC</strong> offers lowest latency.
+      <strong>RTSP</strong> URLs can be opened in VLC or any RTSP player.
       Switch the access host above to use VPN IP for remote playback.
     </p>
   </div>
 
   <script>
   (function() {{
-    const RTSP_PORT = {RTSP_PORT};
-    const HLS_PORT  = {HLS_PORT};
-    const PATHS     = {paths_json};
+    const RTSP_PORT   = {RTSP_PORT};
+    const HLS_PORT    = {HLS_PORT};
+    const WEBRTC_PORT = {WEBRTC_PORT};
+    const PATHS       = {paths_json};
     const VPN_IP    = {vpn_ip_json};
 
     const hostSelect = document.getElementById('host-select');
@@ -521,6 +552,9 @@ def view():
     function rtspUrl(host, path) {{
       return 'rtsp://' + host + ':' + RTSP_PORT + '/' + path;
     }}
+    function webrtcUrl(host, path) {{
+      return 'http://' + host + ':' + WEBRTC_PORT + '/' + path;
+    }}
 
     function copyToClipboard(text, btn) {{
       navigator.clipboard.writeText(text).then(function() {{
@@ -547,6 +581,7 @@ def view():
             <span class="stream-name">${{path}}</span>
             <div class="proto-tabs">
               <button class="proto-tab active" data-proto="hls" data-path="${{path}}">HLS</button>
+              <button class="proto-tab" data-proto="webrtc" data-path="${{path}}">WebRTC</button>
               <button class="proto-tab" data-proto="rtsp" data-path="${{path}}">RTSP</button>
             </div>
           </div>
@@ -558,6 +593,11 @@ def view():
               <span class="url-label url-label-hls">HLS</span>
               <span class="url-value" title="${{hls}}">${{hls}}</span>
               <button class="copy-btn" onclick="copyUrl(this, '${{hls}}')">Copy</button>
+            </div>
+            <div class="url-row">
+              <span class="url-label" style="background: rgba(52,211,153,0.2); color: var(--success);">WebRTC</span>
+              <span class="url-value" title="${{webrtcUrl(host, path)}}">${{webrtcUrl(host, path)}}</span>
+              <button class="copy-btn" onclick="copyUrl(this, '${{webrtcUrl(host, path)}}')">Copy</button>
             </div>
             <div class="url-row">
               <span class="url-label url-label-rtsp">RTSP</span>
@@ -586,6 +626,11 @@ def view():
               playerArea.innerHTML = `<video id="${{videoId}}" class="stream-video" controls autoplay muted playsinline></video>`;
               const newVideo = document.getElementById(videoId);
               attachHls(newVideo, hlsUrl(getHost(), path));
+            }} else if (proto === 'webrtc') {{
+              const wUrl = webrtcUrl(getHost(), path);
+              playerArea.innerHTML = `
+                <iframe src="${{wUrl}}" class="stream-video" style="border: none;" allow="autoplay"></iframe>
+              `;
             }} else {{
               const r = rtspUrl(getHost(), path);
               playerArea.innerHTML = `
