@@ -967,13 +967,26 @@ async def finalize_setup(request: Request):
 
 @app.post("/rediscover", response_class=HTMLResponse)
 def rediscover():
-    """Run camera discovery and regenerate mediamtx config; redirect to /."""
+    """Run camera discovery, regenerate mediamtx config, reload workers; redirect."""
     edge_dir = "/opt/ively/edge"
-    env = {**os.environ, "PYTHONPATH": edge_dir}
+    try:
+        from agent.camera.pipeline import edge_agent_env
+    except ImportError:
+        edge_agent_env = lambda extra=None: {  # noqa: E731
+            **os.environ,
+            "PYTHONPATH": edge_dir,
+            "IVELY_SUBSTREAM_ONLY": "1",
+            "IVELY_RTSP_PROBE_URLS": "1",
+            **(extra or {}),
+        }
+    py = sys.executable
+    venv_py = os.path.join("/opt/ively/venv/bin/python3")
+    if os.path.isfile(venv_py):
+        py = venv_py
     subprocess.Popen(
-        [sys.executable, "-m", "agent.camera.discover"],
+        [py, "-m", "agent.camera.discover"],
         cwd=edge_dir,
-        env=env,
+        env=edge_agent_env(),
     )
     return RedirectResponse(url="/", status_code=303)
 

@@ -469,12 +469,17 @@ def vpn_status():
 
 @app.post("/rediscover", response_class=HTMLResponse)
 def rediscover():
-    """Run camera discovery and regenerate mediamtx config; redirect to /provisioned."""
-    env = {**os.environ, "PYTHONPATH": str(EDGE_DIR)}
+    """Run camera discovery, regenerate mediamtx config, reload workers; redirect."""
+    from agent.camera.pipeline import edge_agent_env
+
+    py = sys.executable
+    venv_py = Path("/opt/ively/venv/bin/python3")
+    if venv_py.is_file():
+        py = str(venv_py)
     subprocess.Popen(
-        [sys.executable, "-m", "agent.camera.discover"],
+        [py, "-m", "agent.camera.discover"],
         cwd=str(EDGE_DIR),
-        env=env,
+        env=edge_agent_env(),
     )
     return RedirectResponse(url="/provisioned", status_code=303)
 

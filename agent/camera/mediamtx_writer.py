@@ -48,11 +48,11 @@ RTSP_FORMATS = {
         "rtsp://{username}:{password}@{ip}:554/Streaming/Channels/{channel}02",
     ),
     "dahua": (
-        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
+        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=0",
         "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
     ),
     "cp plus": (
-        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
+        "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=0",
         "rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype=1",
     ),
     "godrej": (
@@ -176,21 +176,99 @@ def _load_manufacturer_override(path: str = MANUFACTURER_OVERRIDE_PATH) -> Optio
         return None
 
 
-def _rtsp_low_url(
+def _rtsp_format_url(fmt: str, params: dict) -> str:
+    """Format an RTSP URL template with credential params."""
+    try:
+        return fmt.format(**params)
+    except KeyError:
+        return (
+            fmt.replace("{username}", params["username"])
+            .replace("{password}", params["password"])
+            .replace("{ip}", params["ip"])
+            .replace("{channel}", params["channel"])
+        )
+
+
+def _use_substream_only(manufacturer: str) -> bool:
+    """
+    Prefer substream RTSP only (no main-stream fallback).
+    Default: on (IVELY_SUBSTREAM_ONLY=1). Set IVELY_SUBSTREAM_ONLY=0 to also try main stream.
+    """
+    _ = manufacturer  # reserved for future per-brand overrides
+    v = (os.environ.get("IVELY_SUBSTREAM_ONLY") or "1").strip().lower()
+    return v not in ("0", "false", "no")
+
+
+def _use_rtsp_probe() -> bool:
+    """ffprobe each candidate URL; use only streams that return video (default on)."""
+    v = (os.environ.get("IVELY_RTSP_PROBE_URLS") or "1").strip().lower()
+    return v not in ("0", "false", "no")
+
+
+def _rtsp_url_probe_ok(url: str, timeout_sec: float = 10.0) -> bool:
+    """True if ffprobe can read at least one video frame from this RTSP URL."""
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-rtsp_transport",
+                "tcp",
+                "-timeout",
+                str(int(timeout_sec * 1_000_000)),
+                "-i",
+                url,
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "default=nw=1:nk=1",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec + 5,
+        )
+        return r.returncode == 0 and bool((r.stdout or "").strip())
+    except Exception:
+        return False
+
+
+def _filter_rtsp_urls_by_probe(urls: list[str]) -> list[str]:
+    """Keep only probe-OK URLs; if none OK, return original list for worker retry."""
+    if not urls:
+        return urls
+    working = [u for u in urls if _rtsp_url_probe_ok(u)]
+    if working:
+        return working
+    print(
+        "[mediamtx_writer] RTSP probe: no URL passed ffprobe; "
+        "keeping all candidates for worker rotation"
+    )
+    return urls
+
+
+def _rtsp_low_url_candidates(
     ip: str,
     model: str,
     username: str,
     password: str,
     manufacturer_override: Optional[str] = None,
     channel: str = "1",
-) -> str:
-    """Return low/sub-stream RTSP URL with credentials embedded."""
+    probe: Optional[bool] = None,
+) -> list[str]:
+    """
+    Return ordered RTSP URLs to try for the low/sub stream.
+    Sub-stream first; main stream only when substream-only mode is off.
+    Optionally ffprobe-filter to working URLs (H.265/H.264, no NVR reconfiguration).
+    """
     if manufacturer_override and manufacturer_override in RTSP_FORMATS:
         manufacturer = manufacturer_override
     else:
         manufacturer = _manufacturer_from_model(model)
     formats = RTSP_FORMATS.get(manufacturer, RTSP_FORMATS["onvif"])
-    _, sub_fmt = formats
+    main_fmt, sub_fmt = formats
     safe_user = urllib.parse.quote(username or "", safe="")
     safe_pass = urllib.parse.quote(password or "", safe="")
     params = {
@@ -200,13 +278,33 @@ def _rtsp_low_url(
         "channel": channel,
         "profile": "2",
     }
-    try:
-        low_url = sub_fmt.format(**params)
-    except KeyError:
-        low_url = sub_fmt.replace("{username}", safe_user).replace(
-            "{password}", safe_pass
-        ).replace("{ip}", ip)
-    return low_url
+    if _use_substream_only(manufacturer):
+        fmts = (sub_fmt,)
+    else:
+        fmts = (sub_fmt, main_fmt)
+    urls: list[str] = []
+    for fmt in fmts:
+        url = _rtsp_format_url(fmt, params)
+        if url not in urls:
+            urls.append(url)
+    if probe if probe is not None else _use_rtsp_probe():
+        urls = _filter_rtsp_urls_by_probe(urls)
+    return urls
+
+
+def _rtsp_low_url(
+    ip: str,
+    model: str,
+    username: str,
+    password: str,
+    manufacturer_override: Optional[str] = None,
+    channel: str = "1",
+) -> str:
+    """Return primary low/sub-stream RTSP URL (first candidate)."""
+    urls = _rtsp_low_url_candidates(
+        ip, model, username, password, manufacturer_override, channel
+    )
+    return urls[0] if urls else ""
 
 
 def _load_credentials(vault_path: str = "/opt/ively/agent/camera.vault"):
@@ -281,7 +379,7 @@ def _use_ultra_low_profile() -> bool:
 def _ffmpeg_input_flags() -> list[str]:
     """
     Build robust FFmpeg input flags for unstable RTSP/HEVC camera links.
-    Default prioritizes continuity over minimum latency.
+    Tolerates H.265 + Smart codec from NVR without requiring NVR menu changes.
     """
     fflags = ["+genpts"]
     if _use_discard_corrupt_packets():
@@ -295,6 +393,18 @@ def _ffmpeg_input_flags() -> list[str]:
         "prefer_tcp",
         "-fflags",
         "".join(fflags),
+        # HEVC / Smart H.265+: ignore corrupt packets, conceal reference errors.
+        "-err_detect",
+        "ignore_err",
+        "-ec",
+        "guess_mvs+deblock",
+        # Bad timestamps from NVR smart codec.
+        "-use_wallclock_as_timestamps",
+        "1",
+        "-analyzeduration",
+        "5000000",
+        "-probesize",
+        "5000000",
         # Keep larger reordering tolerance for jittery links.
         "-reorder_queue_size",
         "1024",
@@ -308,16 +418,16 @@ def _ffmpeg_input_flags() -> list[str]:
 
 
 DEFAULT_STREAM_PROFILES: Dict[str, Dict[str, str]] = {
-    # Single path per camera (`camN_low`): conservative defaults for unstable / low-bandwidth links.
+    # Published stream (H.264 out): transcode any camera codec (H.265/H.264) to this profile.
     "low": {
-        "width": "480",
-        "height": "270",
-        "fps": "8",
-        "bitrate": "300k",
-        "maxrate": "350k",
-        "bufsize": "700k",
-        "gop": "16",
-        "keyint_min": "8",
+        "width": "640",
+        "height": "360",
+        "fps": "10",
+        "bitrate": "512k",
+        "maxrate": "580k",
+        "bufsize": "1024k",
+        "gop": "20",
+        "keyint_min": "10",
     },
 }
 
@@ -645,18 +755,33 @@ def generate_worker_configs(
 
         for ch in channel_list:
             stream_name = f"{path_label}cam{camera_index}_low"
-            low_source_url = _rtsp_low_url(
-                ip, model, username, password, manufacturer_override, channel=str(ch)
-            )
-            ffmpeg_cmd = _ffmpeg_transcode_publish_command(
-                low_source_url,
-                stream_profiles["low"],
-                publish_path=stream_name,
-                rtsp_port=rtsp_port,
-            )
+            # Optional per-camera override from provision UI / cams.json
+            override_url = (c.get("rtsp_url") or "").strip()
+            if override_url:
+                rtsp_urls = [override_url]
+            else:
+                rtsp_urls = _rtsp_low_url_candidates(
+                    ip,
+                    model,
+                    username,
+                    password,
+                    manufacturer_override,
+                    channel=str(ch),
+                )
+            ffmpeg_cmds = [
+                _ffmpeg_transcode_publish_command(
+                    url,
+                    stream_profiles["low"],
+                    publish_path=stream_name,
+                    rtsp_port=rtsp_port,
+                )
+                for url in rtsp_urls
+            ]
             configs.append({
                 "stream_name": stream_name,
-                "ffmpeg_cmd": ffmpeg_cmd,
+                "ffmpeg_cmd": ffmpeg_cmds[0],
+                "ffmpeg_cmds": ffmpeg_cmds,
+                "rtsp_urls": rtsp_urls,
                 "expected_fps": float(stream_profiles["low"]["fps"]),
             })
             camera_index += 1

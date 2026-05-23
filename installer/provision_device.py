@@ -172,34 +172,40 @@ else:
     print("      (Cloud may not support WireGuard yet, or wg is not installed)")
 
 # ---------------------------------------------------------------------------
-# 5. Apply Selected Cameras to MediaMTX
+# 5. Apply Selected Cameras to MediaMTX (+ worker config via agent on start)
 # ---------------------------------------------------------------------------
+EDGE_DIR = "/opt/ively/edge"
+PY = sys.executable
+if os.path.isfile("/opt/ively/venv/bin/python3"):
+    PY = "/opt/ively/venv/bin/python3"
+
+from agent.camera.pipeline import apply_camera_config, edge_agent_env, restart_stream_services
+
 cams_file = "/opt/ively/agent/cams.json"
 if os.path.exists(cams_file):
     print("Applying selected cameras to MediaMTX...")
     try:
-        with open(cams_file, "r", encoding="utf-8") as f:
+        with open(cams_file, encoding="utf-8") as f:
             cams = json.load(f)
-        from agent.camera.mediamtx_writer import generate
-        generate(cams)
+        apply_camera_config(cams)
         print(f"MediaMTX configured for {len(cams)} endpoints.")
     except Exception as e:
         print(f"Error structuring MediaMTX configuration: {e}")
 else:
-    print("No localized cams.json found. Falling back to full custom discovery...")
+    print("No cams.json found. Running ONVIF discovery...")
     subprocess.run(
-        ["python3", "-m", "agent.camera.discover"],
-        cwd="/opt/ively/edge",
+        [PY, "-m", "agent.camera.discover"],
+        cwd=EDGE_DIR,
+        env=edge_agent_env(),
         check=False,
     )
 
 # ---------------------------------------------------------------------------
-# 6. Enable and start services
+# 6. Enable and start services (MediaMTX first, then agent + workers)
 # ---------------------------------------------------------------------------
-subprocess.run(["systemctl", "enable", "mediamtx"])
-subprocess.run(["systemctl", "enable", "ively-agent"])
-subprocess.run(["systemctl", "restart", "mediamtx"])
-subprocess.run(["systemctl", "restart", "ively-agent"])
+subprocess.run(["systemctl", "enable", "mediamtx"], check=False)
+subprocess.run(["systemctl", "enable", "ively-agent"], check=False)
+restart_stream_services(restart_mediamtx=True, restart_agent=True)
 
 with open("/opt/ively/.provisioned", "w") as _:
     pass

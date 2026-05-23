@@ -49,7 +49,7 @@ End-to-end flow from preparing the device to a working, provisioned edge with st
 | | **Camera manufacturer** — Select or leave "Auto-detect from camera". | |
 | | **Camera username / Camera password** — If your cameras need login. | |
 | 3.4 | Click **Start setup**. | Response: "Provisioning started" (success page). |
-| 3.5 | Backend: device registers with cloud (sends WireGuard public key), receives device ID, token, and **VPN configuration**; WireGuard tunnel is established; credentials are saved; ONVIF discovery runs; MediaMTX config is generated; **ively-provision** is disabled and **ively-agent** + **mediamtx** are started. | After ~1–2 minutes the device is fully provisioned with a secure VPN tunnel to the cloud. |
+| 3.5 | Backend: registers with cloud (VPN + credentials); writes **cams.json**; generates **mediamtx.yml** (`source: publisher` paths); starts **mediamtx** then **ively-agent** (FFmpeg workers publish H.264 to each path). | After ~1–2 minutes: VPN up, workers running, streams available. |
 
 **If provisioning fails:**
 
@@ -63,32 +63,35 @@ End-to-end flow from preparing the device to a working, provisioned edge with st
 |------|--------|------------------|
 | 4.1 | Open **http://&lt;device-ip&gt;:8080/view**. | Stream viewer page; list of stream paths (e.g. `cam1_low`). Click "Open stream" to verify video. |
 | 4.2 | Open **http://&lt;device-ip&gt;:8080/provisioned**. | Table: Device ID, Cloud URL, Customer, Site, **VPN Status**, **VPN IP**, and list of camera stream paths. |
-| 4.3 | On the device run: `sudo systemctl status ively-agent mediamtx`. | Both show **active (running)**. |
-| 4.4 | Check VPN: `sudo wg show`. | Shows WireGuard interface with handshake and transfer data. |
-| 4.5 | Check VPN API: `curl http://localhost:8080/vpn-status`. | JSON with VPN status. |
+| 4.3 | On the device run: `sudo systemctl status mediamtx ively-agent`. | Both **active (running)** (agent starts after MediaMTX). |
+| 4.4 | `curl -s http://localhost:9997/v3/paths/list \| jq` | Each path shows **`"ready": true`** (FFmpeg publisher connected). |
+| 4.5 | `curl -s http://127.0.0.1:8080/metrics \| jq '.summary, .live_workers'` | Workers **ok**, FPS &gt; 0. |
+| 4.6 | Check VPN: `sudo wg show` and `curl http://localhost:8080/vpn-status`. | Tunnel connected. |
 
 **If streams don't load:**
 
-- Ensure cameras are on the same LAN and ONVIF discovery found them. Use **Rediscover cameras** on the provisioned page if you added cameras later.
-- Check Edge Diagnostics: Live stream workers are persistent now. Look at UI diagnostics or check `curl http://localhost:8080/metrics` to identify frozen streams or disconnected endpoints.
+- **`ready: false`** on paths/list → workers not publishing: `curl -s -X POST http://127.0.0.1:8080/workers/reload` then recheck paths/list.
+- Ensure cameras on same LAN; credentials in provision form match NVR.
+- `sudo journalctl -u ively-agent -f` — look for `[worker:..._low] Started` and RTSP errors.
+- Use **Rediscover cameras** on :8080/provisioned (regenerates config + reloads workers).
 
 ### Phase 5 — Add a camera later (no full setup)
 
 | Step | Action | Expected outcome |
 |------|--------|------------------|
 | 5.1 | Open **http://&lt;device-ip&gt;:8080/provisioned** (or **http://&lt;device-ip&gt;:2025** if provision UI is running and already provisioned). | Provisioned device table is shown. |
-| 5.2 | Click **Rediscover cameras**. | Discovery runs in the background; mediamtx config is updated. |
-| 5.3 | Refresh the page. | New stream paths appear in the table. View them at **http://&lt;device-ip&gt;:8080/view**. |
+| 5.2 | Click **Rediscover cameras**. | Updates mediamtx.yml and reloads FFmpeg workers (no full re-provision). |
+| 5.3 | Wait ~30s, then `curl -s http://localhost:9997/v3/paths/list \| jq` | Paths **`ready: true`**. View at **http://&lt;device-ip&gt;:8080/view**. |
 
 You do **not** need to run Provision setup again; only discovery is re-run.
 
 ### E2E summary
 
 ```
-[Prepare device & network] → [Run installer on device] → [Open :2025 in browser]
-       → [Fill form & Start setup] → [WireGuard VPN established automatically]
-       → [Verify :8080/view and :8080/provisioned]
-       → [Optional: Rediscover cameras later]
+[Install] → [:2025 provision] → [cams.json + mediamtx.yml]
+       → [mediamtx start] → [ively-agent starts FFmpeg workers per camera]
+       → [paths/list ready:true] → [:8080/view + VPN/cloud]
+       → [Optional: Rediscover → worker reload]
 ```
 
 ---
@@ -329,6 +332,26 @@ curl -s http://localhost:8080/metrics | jq .
 | MediaMTX logs show no activity | This is normal! Subprocesses handle fetching. To view actual camera stream health logs, check the agent trace: `sudo journalctl -u ively-agent -f`. Look for lines tagged `[worker:cam1_low]`. |
 | Want to manually clear a cooldown? | Rather than restarting MediaMTX (which drops all feeds), restart the agent which flushes the manager's restart tracker: `sudo systemctl restart ively-agent`. |
 | `metrics.db` size growing too large? | The agent auto-prunes records older than 7 days per loop. No manual cleanup is required. |
+
+### 14. H.265 / Dahua NVR — no menu changes required
+
+The edge **accepts H.265 (HEVC) or H.264** from the NVR over RTSP and **always publishes H.264** to MediaMTX (default: 640×360, 10 fps, 512 kbps). You do **not** need to switch the NVR to H.264.
+
+**Defaults (no env vars):**
+
+- Dahua / CP Plus: use **substream only** (`subtype=1`) — avoids broken main streams.
+- **ffprobe** each RTSP URL before starting workers; only working URLs are used.
+- FFmpeg input: corrupt-packet discard, HEVC error concealment, tolerant timestamps (Smart H.265+).
+
+**Optional overrides:**
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `IVELY_SUBSTREAM_ONLY` | `1` | `0` = also try main stream |
+| `IVELY_RTSP_PROBE_URLS` | `1` | `0` = skip ffprobe URL filter |
+| Per camera in `cams.json` | — | `"rtsp_url": "rtsp://..."` if you know the exact working URL |
+
+After deploy: `sudo systemctl restart ively-agent` then `curl -s -X POST http://127.0.0.1:8080/workers/reload`.
 
 ---
 

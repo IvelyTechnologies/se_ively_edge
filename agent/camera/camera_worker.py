@@ -94,11 +94,16 @@ class CameraWorker:
         stream_name: str,
         ffmpeg_cmd: str,
         expected_fps: float = 8.0,
+        ffmpeg_cmds: Optional[List[str]] = None,
+        rtsp_urls: Optional[List[str]] = None,
         restart_tracker: Optional[RestartTracker] = None,
         on_unhealthy: Optional[Callable[["CameraWorker"], None]] = None,
     ):
         self.stream_name = stream_name
-        self.ffmpeg_cmd = ffmpeg_cmd
+        self._ffmpeg_cmds = list(ffmpeg_cmds or [ffmpeg_cmd])
+        self._rtsp_urls = list(rtsp_urls or [])
+        self._cmd_index = 0
+        self.ffmpeg_cmd = self._ffmpeg_cmds[self._cmd_index]
         self.expected_fps = expected_fps
         self._restart_tracker = restart_tracker or RestartTracker()
         self._on_unhealthy = on_unhealthy
@@ -108,6 +113,7 @@ class CameraWorker:
         self._running = False
         self._lock = threading.Lock()
         self._start_time: float = 0.0
+        self._last_run_uptime: float = 0.0
         self._restart_count: int = 0
 
         self._freeze_detector = StreamFreezeDetector(
@@ -132,16 +138,23 @@ class CameraWorker:
     def restart_count(self) -> int:
         return self._restart_count
 
+    def _sync_active_cmd(self) -> None:
+        self.ffmpeg_cmd = self._ffmpeg_cmds[self._cmd_index]
+
+    def _advance_rtsp_candidate(self) -> None:
+        if len(self._ffmpeg_cmds) > 1:
+            self._cmd_index = (self._cmd_index + 1) % len(self._ffmpeg_cmds)
+            self._sync_active_cmd()
+
     def start(self) -> bool:
         """Launch FFmpeg subprocess. Returns True on success."""
         with self._lock:
             if self.is_running:
                 return True
+            self._sync_active_cmd()
 
             try:
-                # Use shell=True because the command string has MediaMTX variables
-                # ($RTSP_PORT, $MTX_PATH) that are not applicable in worker mode.
-                # The worker command is pre-resolved with actual values.
+                # Command is pre-resolved (publish URL + input RTSP URL).
                 self._process = subprocess.Popen(
                     shlex.split(self.ffmpeg_cmd),
                     stdout=subprocess.DEVNULL,
@@ -165,7 +178,14 @@ class CameraWorker:
             )
             self._reader_thread.start()
 
-            print(f"[worker:{self.stream_name}] Started (PID {self._process.pid})")
+            url_hint = ""
+            if self._rtsp_urls and self._cmd_index < len(self._rtsp_urls):
+                url_hint = f" input={self._rtsp_urls[self._cmd_index]}"
+            elif len(self._ffmpeg_cmds) > 1:
+                url_hint = f" candidate {self._cmd_index + 1}/{len(self._ffmpeg_cmds)}"
+            print(
+                f"[worker:{self.stream_name}] Started (PID {self._process.pid}){url_hint}"
+            )
             return True
 
     def stop(self, timeout: float = 10.0) -> None:
@@ -222,6 +242,12 @@ class CameraWorker:
         self._restart_tracker.record_restart(self.stream_name)
         self._restart_count += 1
 
+        # Try next RTSP URL when previous input failed quickly or stream froze.
+        if len(self._ffmpeg_cmds) > 1:
+            short_run = self._last_run_uptime > 0 and self._last_run_uptime < 30
+            if short_run or not self.is_healthy():
+                self._advance_rtsp_candidate()
+
         print(f"[worker:{self.stream_name}] Restarting (attempt #{self._restart_count})")
         self.stop()
         time.sleep(2)  # brief cooldown before restart
@@ -255,6 +281,13 @@ class CameraWorker:
             "in_cooldown": self._restart_tracker.is_in_cooldown(self.stream_name),
             "error_count": diag.error_count,
             "last_error": diag.last_error,
+            "rtsp_candidate": self._cmd_index + 1,
+            "rtsp_candidates": len(self._ffmpeg_cmds),
+            "rtsp_url": (
+                self._rtsp_urls[self._cmd_index]
+                if self._rtsp_urls and self._cmd_index < len(self._rtsp_urls)
+                else None
+            ),
         }
 
     def _read_stderr(self) -> None:
@@ -276,8 +309,13 @@ class CameraWorker:
             pass
         finally:
             # Process ended — mark as not running
+            if self._start_time > 0:
+                self._last_run_uptime = time.monotonic() - self._start_time
             if self._running:
-                print(f"[worker:{self.stream_name}] FFmpeg process exited")
+                print(
+                    f"[worker:{self.stream_name}] FFmpeg process exited "
+                    f"(ran {self._last_run_uptime:.1f}s)"
+                )
                 self._running = False
 
 
@@ -306,12 +344,16 @@ class CameraWorkerManager:
         stream_name: str,
         ffmpeg_cmd: str,
         expected_fps: float = 8.0,
+        ffmpeg_cmds: Optional[List[str]] = None,
+        rtsp_urls: Optional[List[str]] = None,
     ) -> CameraWorker:
         """Register a new camera worker."""
         worker = CameraWorker(
             stream_name=stream_name,
             ffmpeg_cmd=ffmpeg_cmd,
             expected_fps=expected_fps,
+            ffmpeg_cmds=ffmpeg_cmds,
+            rtsp_urls=rtsp_urls,
             restart_tracker=self._restart_tracker,
         )
         with self._lock:
@@ -345,6 +387,8 @@ class CameraWorkerManager:
                 stream_name=cfg["stream_name"],
                 ffmpeg_cmd=cfg["ffmpeg_cmd"],
                 expected_fps=float(cfg.get("expected_fps", 8.0)),
+                ffmpeg_cmds=cfg.get("ffmpeg_cmds"),
+                rtsp_urls=cfg.get("rtsp_urls"),
             )
         return self.start_all()
 

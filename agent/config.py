@@ -35,6 +35,15 @@ WORKER_MAX_RESTARTS = int(os.environ.get("IVELY_WORKER_MAX_RESTARTS", "3"))
 WORKER_COOLDOWN_SEC = int(os.environ.get("IVELY_WORKER_COOLDOWN_SEC", "300"))
 WORKER_HEALTH_CHECK_SEC = 15  # how often workers check their FFmpeg process
 
+# Substream-only RTSP (no main-stream fallback). Default IVELY_SUBSTREAM_ONLY=1.
+# Set IVELY_SUBSTREAM_ONLY=0 to also try main stream (e.g. subtype=0 on Dahua).
+# Probe RTSP URLs with ffprobe before starting workers; keep URLs that decode. Default on.
+# Set IVELY_RTSP_PROBE_URLS=0 to skip probing.
+
+# Defaults applied to agent subprocesses (discover, provision) and systemd template.
+IVELY_SUBSTREAM_ONLY_DEFAULT = os.environ.get("IVELY_SUBSTREAM_ONLY", "1")
+IVELY_RTSP_PROBE_URLS_DEFAULT = os.environ.get("IVELY_RTSP_PROBE_URLS", "1")
+
 # ---------------------------------------------------------------------------
 # Freeze detection
 # ---------------------------------------------------------------------------

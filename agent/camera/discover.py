@@ -4,7 +4,7 @@ import json
 import os
 
 from agent.camera.onvif_scan import scan
-from agent.camera.mediamtx_writer import generate
+from agent.camera.pipeline import apply_camera_config
 from agent.camera.worker_reload import notify_worker_reload, reload_workers
 from agent.config import CAMS_JSON_PATH
 
@@ -24,13 +24,13 @@ def run(worker_manager=None, reload_workers_after: bool = True):
     After MediaMTX config is written, reloads FFmpeg workers so paths are
     published (in-process when worker_manager is passed, else HTTP notify).
     """
-    cams = None
-    if os.path.exists(CAMS_JSON_PATH):
+    cams_path = str(CAMS_JSON_PATH)
+    if os.path.exists(cams_path):
         try:
-            with open(CAMS_JSON_PATH, "r", encoding="utf-8") as f:
+            with open(cams_path, encoding="utf-8") as f:
                 cams = json.load(f)
             if cams:
-                generate(cams)
+                apply_camera_config(cams)
                 print("Configured", len(cams), "cameras (from cams.json)")
                 if reload_workers_after:
                     _reload_workers(worker_manager)
@@ -40,7 +40,7 @@ def run(worker_manager=None, reload_workers_after: bool = True):
 
     # Fallback: live ONVIF scan (no cams.json or it was empty/corrupt)
     cams = scan()
-    generate(cams)
+    apply_camera_config(cams, save_cams_json=bool(cams))
     print("Configured", len(cams), "cameras (from ONVIF scan)")
     if reload_workers_after:
         _reload_workers(worker_manager)

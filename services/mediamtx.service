@@ -1,10 +1,14 @@
 [Unit]
 Description=MediaMTX RTSP/WebRTC server
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 ExecStart=/opt/ively/mediamtx/mediamtx /opt/ively/mediamtx/mediamtx.yml
 Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
