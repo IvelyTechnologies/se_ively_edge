@@ -13,7 +13,14 @@ import sys
 import time
 from typing import Optional
 
-import psutil
+try:
+    import psutil
+
+    HAS_PSUTIL = True
+except ImportError:
+    psutil = None  # type: ignore
+    HAS_PSUTIL = False
+    print("[watchdog] psutil not installed — CPU metrics disabled", file=sys.stderr)
 
 try:
     from dotenv import load_dotenv
@@ -162,16 +169,16 @@ def watchdog_loop(
             _check_camera_workers()
 
             # 3) CPU monitoring — log warning, do NOT restart MediaMTX
-            try:
-                cpu = psutil.cpu_percent(interval=1)
-                if cpu > cpu_threshold:
-                    print(
-                        f"[watchdog] High CPU: {cpu:.1f}% "
-                        f"(threshold: {cpu_threshold}%)"
-                    )
-                    # Future: could pause low-priority workers here
-            except Exception:
-                pass
+            if HAS_PSUTIL:
+                try:
+                    cpu = psutil.cpu_percent(interval=1)
+                    if cpu > cpu_threshold:
+                        print(
+                            f"[watchdog] High CPU: {cpu:.1f}% "
+                            f"(threshold: {cpu_threshold}%)"
+                        )
+                except Exception:
+                    pass
 
             # 4) Disk cleanup
             if disk_cleanup is not None:

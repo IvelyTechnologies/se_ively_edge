@@ -8,7 +8,7 @@ WorkingDirectory=/opt/ively/edge
 Environment=PYTHONPATH=/opt/ively/edge
 Environment=IVELY_SUBSTREAM_ONLY=1
 Environment=IVELY_RTSP_PROBE_URLS=1
-ExecStart=/usr/bin/python3 -m agent.main
+ExecStart=/opt/ively/edge/installer/run-ively-agent.sh
 Restart=always
 RestartSec=5
 StandardOutput=journal

@@ -83,6 +83,7 @@ else
   PYTHONPATH=/opt/ively/edge python3 -c "from agent.camera.mediamtx_writer import generate; generate([])"
 fi
 
+chmod +x /opt/ively/edge/installer/run-ively-agent.sh
 cp services/*.service /etc/systemd/system/
 
 systemctl daemon-reload

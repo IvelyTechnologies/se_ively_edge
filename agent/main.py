@@ -58,8 +58,13 @@ threading.Thread(target=_load_and_start_workers, name="worker-init", daemon=True
 # ---------------------------------------------------------------------------
 def _metrics_loop() -> None:
     """Periodically record camera and system metrics."""
-    import psutil
     from agent import metrics
+
+    try:
+        import psutil
+    except ImportError:
+        print("[metrics] psutil not installed — system metrics disabled")
+        psutil = None
 
     try:
         from agent.wireguard.client import is_interface_up as wg_is_up
@@ -77,19 +82,18 @@ def _metrics_loop() -> None:
             if all_metrics:
                 metrics.record_camera_metrics(list(all_metrics.values()))
 
-            # System metrics
-            summary = worker_manager.get_summary()
-            metrics.record_system_metrics(
-                cpu_percent=psutil.cpu_percent(interval=0),
-                memory_percent=psutil.virtual_memory().percent,
-                disk_percent=psutil.disk_usage("/").percent,
-                tunnel_up=wg_is_up(),
-                active_cameras=summary.get("active", 0),
-                total_cameras=summary.get("total", 0),
-            )
-
-            # Prune old records (cheap check, only deletes when needed)
-            metrics.prune_old_records()
+            # System metrics (requires psutil)
+            if psutil is not None:
+                summary = worker_manager.get_summary()
+                metrics.record_system_metrics(
+                    cpu_percent=psutil.cpu_percent(interval=0),
+                    memory_percent=psutil.virtual_memory().percent,
+                    disk_percent=psutil.disk_usage("/").percent,
+                    tunnel_up=wg_is_up(),
+                    active_cameras=summary.get("active", 0),
+                    total_cameras=summary.get("total", 0),
+                )
+                metrics.prune_old_records()
 
         except Exception as e:
             print(f"[metrics] Collection error: {e}")

@@ -52,7 +52,8 @@ bash installer/base_install.sh
 
 # Override systemd services to use venv Python
 PYVENV="/opt/ively/venv/bin/python3"
-sed "s|/usr/bin/python3|$PYVENV|g" services/ively-agent.service > /etc/systemd/system/ively-agent.service
+cp services/ively-agent.service /etc/systemd/system/ively-agent.service
+chmod +x /opt/ively/edge/installer/run-ively-agent.sh
 cat > /etc/systemd/system/ively-provision.service << EOF
 [Unit]
 Description=Ively SmartEye™ Provision UI

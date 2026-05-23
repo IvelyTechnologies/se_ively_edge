@@ -301,6 +301,7 @@ rtsp://10.20.0.x:8554/customer_site_cam1_low
 | Provision fails: No module named 'agent' | Phase 3 | Update repo on device; ensure latest `provision-ui/main.py` (uses PYTHONPATH + cwd). Restart `ively-provision`. |
 | Provision fails: cannot reach cloud | Phase 3 | Verify Cloud URL (IP or hostname), network from edge to cloud, firewall. |
 | VPN not connected / no handshake | Phase 3 / 4 | `sudo wg show`, `sudo wg-quick down wg0 && sudo wg-quick up wg0`. Check cloud WG server is running. |
+| Agent crashes: `No module named 'psutil'` | Phase 4 | Use venv: `sudo /opt/ively/venv/bin/pip install -r /opt/ively/edge/requirements.txt` then deploy `run-ively-agent.sh` service and `sudo systemctl daemon-reload && sudo systemctl restart ively-agent`. Or: `sudo pip3 install psutil`. |
 | Agent crashes: camera.vault not found | Phase 4 | Normal if agent starts before provisioning. After provisioning, vault is created. Restart agent. |
 | MediaMTX crashes without workers | Phase 4 | MediaMTX config may contain bad paths; check `/opt/ively/mediamtx/mediamtx.yml` (all sources should be `publisher`). |
 | No streams / empty list | Phase 4 / 5 | Cameras on same LAN? Run **Rediscover cameras** from :8080/provisioned or :2025. Check camera credentials in provision form. |
