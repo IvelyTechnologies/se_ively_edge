@@ -196,7 +196,7 @@ def watchdog_loop(
             if run_discovery is not None and (now - last_discovery_time) >= discovery_interval_sec:
                 last_discovery_time = now
                 try:
-                    run_discovery()
+                    run_discovery(worker_manager=_worker_manager)
                 except Exception as e:
                     print("[watchdog] Re-discovery error:", e)
 

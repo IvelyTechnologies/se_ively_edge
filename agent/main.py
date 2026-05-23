@@ -8,16 +8,10 @@
 #   5. Start watchdog (background thread)
 #   6. Start WebSocket cloud connection (blocking, main thread)
 
-import json
-import os
 import threading
 import time
 
-from agent.config import (
-    CAMS_JSON_PATH,
-    MEDIAMTX_CONFIG,
-    METRICS_INTERVAL_SEC,
-)
+from agent.config import METRICS_INTERVAL_SEC
 
 # ---------------------------------------------------------------------------
 # 1. One-shot migration: strip stale `DNS = ...` line from wg0.conf
@@ -44,40 +38,14 @@ def _load_and_start_workers() -> None:
     # Wait briefly for MediaMTX to be ready
     time.sleep(3)
 
-    cams = []
-    cams_path = str(CAMS_JSON_PATH)
-    if os.path.exists(cams_path):
-        try:
-            with open(cams_path, "r", encoding="utf-8") as f:
-                cams = json.load(f)
-        except Exception as e:
-            print(f"[main] Error reading cams.json: {e}")
+    from agent.camera.worker_reload import build_worker_configs, reload_workers
 
-    if not cams:
+    configs = build_worker_configs()
+    if not configs:
         print("[main] No cameras configured — workers will start after provisioning")
         return
 
-    # Generate per-camera FFmpeg commands
-    try:
-        from agent.camera.mediamtx_writer import generate_worker_configs
-        configs = generate_worker_configs(cams)
-    except Exception as e:
-        print(f"[main] Error generating worker configs: {e}")
-        return
-
-    if not configs:
-        print("[main] No worker configs generated")
-        return
-
-    # Register and start all workers
-    for cfg in configs:
-        worker_manager.add_worker(
-            stream_name=cfg["stream_name"],
-            ffmpeg_cmd=cfg["ffmpeg_cmd"],
-            expected_fps=cfg["expected_fps"],
-        )
-
-    worker_manager.start_all()
+    reload_workers(worker_manager)
 
 
 # Start workers in a background thread so we don't block the health server

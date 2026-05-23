@@ -365,6 +365,26 @@ def metrics_endpoint():
     return JSONResponse(data)
 
 
+@app.post("/workers/reload")
+def workers_reload():
+    """
+    Reload all camera FFmpeg workers from current cams.json + mediamtx paths.
+    Called after rediscover (subprocess) or for manual recovery.
+    """
+    if _worker_manager is None:
+        return JSONResponse(
+            {"ok": False, "error": "worker manager not available"},
+            status_code=503,
+        )
+    try:
+        from agent.camera.worker_reload import reload_workers
+
+        result = reload_workers(_worker_manager)
+        return JSONResponse({"ok": True, **result})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
 def _provisioned_page_html(info: dict) -> str:
     """Render provisioned device table and camera list with Rediscover button and VPN status."""
     camera_rows = "".join(

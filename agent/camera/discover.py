@@ -5,11 +5,11 @@ import os
 
 from agent.camera.onvif_scan import scan
 from agent.camera.mediamtx_writer import generate
+from agent.camera.worker_reload import notify_worker_reload, reload_workers
+from agent.config import CAMS_JSON_PATH
 
-CAMS_JSON_PATH = "/opt/ively/agent/cams.json"
 
-
-def run():
+def run(worker_manager=None, reload_workers_after: bool = True):
     """
     Generate mediamtx.yml from cameras.
 
@@ -20,7 +20,11 @@ def run():
 
     This prevents the watchdog's periodic re-discovery from wiping out
     manually-configured camera entries.
+
+    After MediaMTX config is written, reloads FFmpeg workers so paths are
+    published (in-process when worker_manager is passed, else HTTP notify).
     """
+    cams = None
     if os.path.exists(CAMS_JSON_PATH):
         try:
             with open(CAMS_JSON_PATH, "r", encoding="utf-8") as f:
@@ -28,6 +32,8 @@ def run():
             if cams:
                 generate(cams)
                 print("Configured", len(cams), "cameras (from cams.json)")
+                if reload_workers_after:
+                    _reload_workers(worker_manager)
                 return
         except Exception as e:
             print(f"Error reading cams.json, falling back to scan: {e}")
@@ -36,6 +42,15 @@ def run():
     cams = scan()
     generate(cams)
     print("Configured", len(cams), "cameras (from ONVIF scan)")
+    if reload_workers_after:
+        _reload_workers(worker_manager)
+
+
+def _reload_workers(worker_manager=None) -> None:
+    if worker_manager is not None:
+        reload_workers(worker_manager)
+    else:
+        notify_worker_reload()
 
 
 if __name__ == "__main__":

@@ -330,6 +330,24 @@ class CameraWorkerManager:
         print(f"[manager] Started {started}/{len(workers)} camera workers")
         return started
 
+    def reload(self, configs: List[dict]) -> int:
+        """
+        Replace all workers with a new config list.
+        Each item: {"stream_name", "ffmpeg_cmd", "expected_fps"}.
+        Returns count of successfully started workers.
+        """
+        self.stop_all()
+        with self._lock:
+            self._workers.clear()
+
+        for cfg in configs:
+            self.add_worker(
+                stream_name=cfg["stream_name"],
+                ffmpeg_cmd=cfg["ffmpeg_cmd"],
+                expected_fps=float(cfg.get("expected_fps", 8.0)),
+            )
+        return self.start_all()
+
     def stop_all(self) -> None:
         """Stop all workers gracefully."""
         with self._lock:
