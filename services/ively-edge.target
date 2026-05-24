@@ -1,0 +1,8 @@
+[Unit]
+Description=Ively SmartEye Edge streaming stack
+Documentation=file:///opt/ively/edge/README.md
+After=network-online.target
+Wants=network-online.target mediamtx.service ively-agent.service
+
+[Install]
+WantedBy=multi-user.target

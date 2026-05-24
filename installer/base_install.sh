@@ -84,6 +84,9 @@ else
 fi
 
 chmod +x /opt/ively/edge/installer/run-ively-agent.sh
+chmod +x /opt/ively/edge/installer/ensure-services-enabled.sh
 cp services/*.service /etc/systemd/system/
+cp services/*.target /etc/systemd/system/ 2>/dev/null || true
 
 systemctl daemon-reload
+bash /opt/ively/edge/installer/ensure-services-enabled.sh

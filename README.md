@@ -64,6 +64,7 @@ End-to-end flow from preparing the device to a working, provisioned edge with st
 | 4.1 | Open **http://&lt;device-ip&gt;:8080/view**. | Stream viewer page; list of stream paths (e.g. `cam1_low`). Click "Open stream" to verify video. |
 | 4.2 | Open **http://&lt;device-ip&gt;:8080/provisioned**. | Table: Device ID, Cloud URL, Customer, Site, **VPN Status**, **VPN IP**, and list of camera stream paths. |
 | 4.3 | On the device run: `sudo systemctl status mediamtx ively-agent`. | Both **active (running)** (agent starts after MediaMTX). |
+| 4.3b | After **reboot**, same check without manual start. | Services auto-start if enabled: `systemctl is-enabled mediamtx ively-agent` → **enabled**. |
 | 4.4 | `curl -s http://localhost:9997/v3/paths/list \| jq` | Each path shows **`"ready": true`** (FFmpeg publisher connected). |
 | 4.5 | `curl -s http://127.0.0.1:8080/metrics \| jq '.summary, .live_workers'` | Workers **ok**, FPS &gt; 0. |
 | 4.6 | Check VPN: `sudo wg show` and `curl http://localhost:8080/vpn-status`. | Tunnel connected. |
@@ -165,6 +166,9 @@ You do **not** need to run Provision setup again.
 |---------|--------|
 | Restart agent | `sudo systemctl restart ively-agent` |
 | Restart MediaMTX | `sudo systemctl restart mediamtx` |
+| Restart agent | `sudo systemctl restart ively-agent` |
+| Fix boot autostart (one-time) | `sudo bash /opt/ively/edge/installer/ensure-services-enabled.sh` |
+| Check enabled on boot | `systemctl is-enabled mediamtx ively-agent` |
 | Restart WireGuard | `sudo wg-quick down wg0 && sudo wg-quick up wg0` |
 | Start provision UI (e.g. to show table or rediscover) | `sudo systemctl start ively-provision` |
 | Stop provision UI (free port 2025) | `sudo systemctl stop ively-provision` |
@@ -334,7 +338,37 @@ curl -s http://localhost:8080/metrics | jq .
 | Want to manually clear a cooldown? | Rather than restarting MediaMTX (which drops all feeds), restart the agent which flushes the manager's restart tracker: `sudo systemctl restart ively-agent`. |
 | `metrics.db` size growing too large? | The agent auto-prunes records older than 7 days per loop. No manual cleanup is required. |
 
-### 14. H.265 / Dahua NVR — no menu changes required
+### 14. CP Plus / Dahua camera behind NVR (important)
+
+When the camera is added **on the NVR** (e.g. camera IP `192.168.0.2`, NVR web UI at `192.168.0.195`, **channel 4**):
+
+| Field | Use |
+|-------|-----|
+| RTSP host | **NVR IP** (`192.168.0.195`) — not the camera IP |
+| Channel | **NVR channel** (`4` in your screenshot) — not always `1` |
+| Credentials | **NVR login** (`admin` + NVR password) — from provision form / vault |
+| Stream | `subtype=1` (substream) — edge default |
+
+Example `cams.json`:
+
+```json
+[
+  {
+    "ip": "192.168.0.2",
+    "rtsp_host": "192.168.0.195",
+    "model": "cp plus",
+    "selected_channels": [4]
+  }
+]
+```
+
+Test from edge PC:
+
+```bash
+ffprobe -rtsp_transport tcp "rtsp://admin:YOUR_NVR_PASSWORD@192.168.0.195:554/cam/realmonitor?channel=4&subtype=1"
+```
+
+### 15. H.265 / Dahua NVR — no menu changes required
 
 The edge **accepts H.265 (HEVC) or H.264** from the NVR over RTSP and **always publishes H.264** to MediaMTX (default: 640×360, 10 fps, 512 kbps). You do **not** need to switch the NVR to H.264.
 

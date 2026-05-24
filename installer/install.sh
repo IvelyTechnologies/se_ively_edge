@@ -48,12 +48,10 @@ cd /opt/ively/edge
 # Install Python dependencies (system-wide; recommended for edge devices)
 pip3 install -r requirements.txt || pip3 install --break-system-packages -r requirements.txt
 
-# MediaMTX + systemd units
+# MediaMTX + systemd units + enable boot services
 bash installer/base_install.sh
 
 # Start provisioning UI (user completes setup in browser)
-systemctl daemon-reload
-systemctl enable ively-provision
 systemctl start ively-provision
 
 # Allow ports: 2025 = provision UI, 8080 = agent/stream viewer, 51820 = WireGuard VPN

@@ -176,6 +176,18 @@ def _load_manufacturer_override(path: str = MANUFACTURER_OVERRIDE_PATH) -> Optio
         return None
 
 
+def _rtsp_host_for_cam(cam: dict) -> str:
+    """
+    Host for RTSP URL. When the camera is behind an NVR, set rtsp_host or nvr_ip
+    to the NVR address (e.g. 192.168.0.195); keep ip as the camera IP for discovery.
+    """
+    for key in ("rtsp_host", "nvr_ip", "nvr"):
+        val = (cam.get(key) or "").strip()
+        if val:
+            return val
+    return (cam.get("ip") or "").strip()
+
+
 def _rtsp_format_url(fmt: str, params: dict) -> str:
     """Format an RTSP URL template with credential params."""
     try:
@@ -743,8 +755,8 @@ def generate_worker_configs(
     stream_profiles = _load_stream_profiles()
 
     for c in sorted(cams, key=_cam_sort_key):
-        ip = c["ip"]
         model = c.get("model", "")
+        rtsp_host = _rtsp_host_for_cam(c)
 
         selected_channels = c.get("selected_channels")
         if selected_channels:
@@ -761,7 +773,7 @@ def generate_worker_configs(
                 rtsp_urls = [override_url]
             else:
                 rtsp_urls = _rtsp_low_url_candidates(
-                    ip,
+                    rtsp_host,
                     model,
                     username,
                     password,

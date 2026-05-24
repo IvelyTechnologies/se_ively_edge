@@ -201,10 +201,9 @@ else:
     )
 
 # ---------------------------------------------------------------------------
-# 6. Enable and start services (MediaMTX first, then agent + workers)
+# 6. Enable boot services and start streaming stack (MediaMTX → agent)
 # ---------------------------------------------------------------------------
-subprocess.run(["systemctl", "enable", "mediamtx"], check=False)
-subprocess.run(["systemctl", "enable", "ively-agent"], check=False)
+subprocess.run(["bash", f"{EDGE_DIR}/installer/ensure-services-enabled.sh"], check=False)
 restart_stream_services(restart_mediamtx=True, restart_agent=True)
 
 with open("/opt/ively/.provisioned", "w") as _:

@@ -74,7 +74,7 @@ EOF
 systemctl daemon-reload
 
 systemctl daemon-reload
-systemctl enable ively-provision ively-agent mediamtx
+bash /opt/ively/edge/installer/ensure-services-enabled.sh
 systemctl start ively-provision
 
 # Allow ports: 2025 = provision UI, 8080 = agent/stream viewer, 51820 = WireGuard VPN
