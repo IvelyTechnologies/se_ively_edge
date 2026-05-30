@@ -97,7 +97,27 @@ You do **not** need to run Provision setup again; only discovery is re-run.
 
 ### Streaming architecture (enterprise)
 
-Every camera gets **one published path** (e.g. `customer_site_cam1_low`). The pipeline is:
+Every camera gets **one published path** (e.g. `sivakumar_main_office_cam1_low`). The pipeline is:
+
+**Path naming (E2E):**
+
+| Step | Source | Result |
+|------|--------|--------|
+| Provision UI | Customer + Site | Written to `/opt/ively/agent/site.json` |
+| `site.json` | `path_prefix` (auto) | e.g. `sivakumar_main_office` |
+| MediaMTX + FFmpeg | `{path_prefix}_camN_low` | e.g. `sivakumar_main_office_cam1_low` |
+
+If you see bare `cam1_low` on a **provisioned** device, `site.json` is missing customer/site. Fix:
+
+```bash
+sudo cat /opt/ively/agent/site.json
+# Must include: "customer", "site", and ideally "path_prefix"
+
+curl -s -X POST http://127.0.0.1:8080/workers/reload | python3 -m json.tool
+curl -s http://127.0.0.1:9997/v3/paths/list | python3 -m json.tool
+```
+
+Unprovisioned / pre-provision install uses `cam1_low` only until setup completes.
 
 ```
 Camera/NVR (any codec: H.265, H.264, MJPEG, …)

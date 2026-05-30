@@ -1,8 +1,11 @@
 # agent config — centralized edge agent configuration
 # All paths, thresholds, and tuning knobs in a single place.
 
+import json
 import os
+import re
 from pathlib import Path
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -19,6 +22,74 @@ SITE_CONFIG_PATH = AGENT_DIR / "site.json"
 VAULT_PATH = AGENT_DIR / "camera.vault"
 MANUFACTURER_OVERRIDE_PATH = AGENT_DIR / "camera.manufacturer"
 CAMS_JSON_PATH = AGENT_DIR / "cams.json"
+
+
+def compute_path_prefix(customer: str, site: str) -> str:
+    """
+    Build stream path prefix from customer + site (e.g. sivakumar_main_office).
+    Used in mediamtx paths: {prefix}_cam1_low
+    """
+    customer = (customer or "").strip()
+    site = (site or "").strip()
+    if not customer or not site:
+        return ""
+    raw = f"{customer}_{site}".strip("_")
+    sanitized = re.sub(r"[^a-zA-Z0-9_]+", "_", raw).strip("_")
+    return sanitized.lower() if sanitized else ""
+
+
+def load_path_prefix() -> str:
+    """
+    Load path prefix from site.json.
+    Prefers stored path_prefix (set at provision); else derives from customer+site.
+    """
+    try:
+        with open(SITE_CONFIG_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return ""
+        stored = (data.get("path_prefix") or "").strip().lower()
+        if stored:
+            return stored
+        return compute_path_prefix(
+            str(data.get("customer") or ""),
+            str(data.get("site") or ""),
+        )
+    except Exception:
+        return ""
+
+
+def ensure_site_path_prefix(prefix: str) -> None:
+    """Persist path_prefix into site.json so rediscover/reload cannot drift to cam1_low."""
+    if not prefix:
+        return
+    try:
+        path = SITE_CONFIG_PATH
+        if not path.exists():
+            return
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return
+        if (data.get("path_prefix") or "").strip().lower() == prefix:
+            return
+        data["path_prefix"] = prefix
+        tmp = path.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        tmp.replace(path)
+    except Exception:
+        pass
+
+
+def stream_path_name(camera_index: int, prefix: Optional[str] = None) -> str:
+    """Canonical MediaMTX path for camera N (e.g. sivakumar_main_office_cam1_low)."""
+    if prefix is None:
+        prefix = load_path_prefix()
+    if prefix:
+        return f"{prefix}_cam{camera_index}_low"
+    return f"cam{camera_index}_low"
+
 
 # ---------------------------------------------------------------------------
 # Protocol ports (match MediaMTX config)

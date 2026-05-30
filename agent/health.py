@@ -505,7 +505,7 @@ def view():
     """
     paths = _stream_paths()
     if not paths:
-        paths = ["cam1_low"]
+        paths = []
 
     # Get VPN IP if available
     vpn_ip = None
@@ -609,6 +609,16 @@ def view():
     function buildCards() {{
       const host = getHost();
       grid.innerHTML = '';
+
+      if (!PATHS.length) {{
+        grid.innerHTML = `
+          <div class="card" style="padding: 1.25rem; color: var(--text-muted);">
+            No stream paths configured. Check <code>/opt/ively/agent/site.json</code>
+            (customer + site) and run <strong>Rediscover cameras</strong> on
+            <a href="/provisioned">/provisioned</a>.
+          </div>`;
+        return;
+      }}
 
       PATHS.forEach(function(path) {{
         const card = document.createElement('div');

@@ -57,6 +57,15 @@ def reload_workers(manager: "CameraWorkerManager") -> Dict[str, Any]:
         print("[worker_reload] No cameras — all workers stopped")
         return {"started": 0, "total": 0, "stream_names": []}
 
+    from agent.config import PROVISIONED_MARKER, load_path_prefix
+
+    path_prefix = load_path_prefix()
+    if PROVISIONED_MARKER.exists() and not path_prefix:
+        print(
+            "[worker_reload] ERROR: device is provisioned but site.json has no path prefix — "
+            "set customer and site in /opt/ively/agent/site.json, then reload"
+        )
+
     mtx_changed = apply_camera_config(cams)
     configs = build_worker_configs(cams)
     planned_names = {c["stream_name"] for c in configs}

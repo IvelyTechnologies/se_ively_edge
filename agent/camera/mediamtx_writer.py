@@ -8,7 +8,12 @@ import tempfile
 import urllib.parse
 from typing import Dict, Optional
 
-SITE_CONFIG_PATH = "/opt/ively/agent/site.json"
+from agent.config import (
+    SITE_CONFIG_PATH,
+    ensure_site_path_prefix,
+    load_path_prefix,
+    stream_path_name,
+)
 
 # Model substring -> manufacturer key (first match wins; check more specific first)
 MODEL_TO_MANUFACTURER = [
@@ -152,19 +157,20 @@ def _manufacturer_from_model(model: str) -> str:
 
 
 def _path_prefix() -> str:
-    """Customer_site prefix from site.json (e.g. sivakumar_main_office). Empty if not provisioned."""
-    try:
-        with open(SITE_CONFIG_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return ""
-    customer = (data.get("customer") or "").strip()
-    site = (data.get("site") or "").strip()
-    if not customer or not site:
-        return ""
-    raw = f"{customer}_{site}".strip("_")
-    sanitized = re.sub(r"[^a-zA-Z0-9_]+", "_", raw).strip("_")
-    return sanitized.lower() if sanitized else ""
+    """Stream path prefix from provisioned site.json (see agent.config.load_path_prefix)."""
+    prefix = load_path_prefix()
+    if not prefix:
+        try:
+            from agent.config import PROVISIONED_MARKER
+
+            if PROVISIONED_MARKER.exists() or SITE_CONFIG_PATH.exists():
+                print(
+                    "[mediamtx_writer] WARNING: provisioned device but path prefix empty — "
+                    "set customer+site in site.json (paths will be cam1_low until fixed)"
+                )
+        except Exception:
+            pass
+    return prefix
 
 
 def _load_manufacturer_override(path: str = MANUFACTURER_OVERRIDE_PATH) -> Optional[str]:
@@ -852,7 +858,7 @@ def generate(
         manufacturer_override = _load_manufacturer_override()
 
     prefix = _path_prefix()
-    path_label = f"{prefix}_" if prefix else ""
+    ensure_site_path_prefix(prefix)
     webrtc_hosts = _mediamtx_webrtc_hosts_yaml()
     webrtc_ifaces = _mediamtx_webrtc_interface_yaml()
     webrtc_ice = _mediamtx_ice_servers_yaml()
@@ -902,10 +908,9 @@ paths:
             channel_list = list(range(1, channels_count + 1))
 
         for ch in channel_list:
-            # Persistent worker mode: source=publisher, no runOnDemand.
-            # CameraWorkerManager owns the FFmpeg lifecycle.
+            path_name = stream_path_name(camera_index, prefix)
             cfg += f"""
-  {path_label}cam{camera_index}_low:
+  {path_name}:
     source: publisher
 """
             camera_index += 1
@@ -941,7 +946,6 @@ def generate_worker_configs(
         manufacturer_override = _load_manufacturer_override()
 
     prefix = _path_prefix()
-    path_label = f"{prefix}_" if prefix else ""
 
     configs = []
     camera_index = 1
@@ -959,7 +963,7 @@ def generate_worker_configs(
             channel_list = list(range(1, channels_count + 1))
 
         for ch in channel_list:
-            stream_name = f"{path_label}cam{camera_index}_low"
+            stream_name = stream_path_name(camera_index, prefix)
             # Optional per-camera override from provision UI / cams.json
             override_url = (c.get("rtsp_url") or "").strip()
             if override_url:

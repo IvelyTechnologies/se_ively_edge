@@ -122,6 +122,14 @@ with open("/opt/ively/agent/camera.manufacturer", "w", encoding="utf-8") as f:
     f.write(manufacturer)
 
 site_config: dict[str, Any] = {"customer": customer_name, "site": site_name}
+try:
+    from agent.config import compute_path_prefix
+
+    _pp = compute_path_prefix(customer_name, site_name)
+    if _pp:
+        site_config["path_prefix"] = _pp
+except ImportError:
+    pass
 # Also persist IDs when we have them, so the provisioned-info UI can show
 # both the name and the ID. Absent fields stay None and the UI hides them.
 if customer_id:
