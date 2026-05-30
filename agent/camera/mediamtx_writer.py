@@ -161,8 +161,12 @@ def _path_prefix() -> str:
         # Alphanumeric + underscore only, collapse spaces to single underscore
         raw = f"{customer}_{site}".strip("_")
         sanitized = re.sub(r"[^a-zA-Z0-9_]+", "_", raw).strip("_") or "default"
-        return sanitized.lower()
+        prefix = sanitized.lower()
+        if prefix == "default":
+            print("[mediamtx_writer] WARNING: site.json missing customer/site — paths use camN_low only")
+        return prefix
     except Exception:
+        print("[mediamtx_writer] WARNING: cannot read site.json — paths use camN_low only")
         return ""
 
 

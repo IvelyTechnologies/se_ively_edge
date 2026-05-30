@@ -30,20 +30,26 @@ def run(worker_manager=None, reload_workers_after: bool = True):
             with open(cams_path, encoding="utf-8") as f:
                 cams = json.load(f)
             if cams:
-                apply_camera_config(cams)
                 print("Configured", len(cams), "cameras (from cams.json)")
                 if reload_workers_after:
                     _reload_workers(worker_manager)
+                else:
+                    apply_camera_config(cams)
                 return
         except Exception as e:
             print(f"Error reading cams.json, falling back to scan: {e}")
 
     # Fallback: live ONVIF scan (no cams.json or it was empty/corrupt)
     cams = scan()
-    apply_camera_config(cams, save_cams_json=bool(cams))
+    if cams:
+        os.makedirs(os.path.dirname(cams_path), exist_ok=True)
+        with open(cams_path, "w", encoding="utf-8") as f:
+            json.dump(cams, f, indent=2)
     print("Configured", len(cams), "cameras (from ONVIF scan)")
     if reload_workers_after:
         _reload_workers(worker_manager)
+    elif cams:
+        apply_camera_config(cams)
 
 
 def _reload_workers(worker_manager=None) -> None:

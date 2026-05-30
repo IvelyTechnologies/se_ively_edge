@@ -37,28 +37,58 @@ def build_worker_configs(cams: Optional[List[dict]] = None) -> List[dict]:
 def reload_workers(manager: "CameraWorkerManager") -> Dict[str, Any]:
     """
     Stop all workers, replace with configs from current cams.json, start again.
+    Regenerates mediamtx.yml first so path names always match worker publish URLs.
+    Restarts MediaMTX when config changed or worker/path names drifted.
     Returns summary dict for APIs/logs.
     """
-    from agent.camera.pipeline import wait_for_mediamtx
+    import subprocess
+
+    from agent.camera.pipeline import apply_camera_config, wait_for_mediamtx
+    from agent.camera.stream_watch import load_stream_paths
 
     if not wait_for_mediamtx(timeout_sec=30):
         print("[worker_reload] WARNING: MediaMTX not ready; starting workers anyway")
 
-    configs = build_worker_configs()
-    if not configs:
+    cams = load_cams()
+    if not cams:
         manager.stop_all()
         with manager._lock:
             manager._workers.clear()
         print("[worker_reload] No cameras — all workers stopped")
         return {"started": 0, "total": 0, "stream_names": []}
 
+    mtx_changed = apply_camera_config(cams)
+    configs = build_worker_configs(cams)
+    planned_names = {c["stream_name"] for c in configs}
+    file_paths = set(load_stream_paths())
+    with manager._lock:
+        running_names = set(manager._workers.keys())
+
+    need_mtx_restart = (
+        mtx_changed
+        or running_names != planned_names
+        or planned_names != file_paths
+    )
+    if need_mtx_restart:
+        reason = "config changed" if mtx_changed else "path name drift"
+        print(f"[worker_reload] Restarting MediaMTX ({reason})")
+        subprocess.run(
+            ["systemctl", "restart", "mediamtx"],
+            check=False,
+            timeout=30,
+        )
+        if not wait_for_mediamtx(timeout_sec=45):
+            print("[worker_reload] WARNING: MediaMTX not ready after restart")
+
     started = manager.reload(configs)
     names = [c["stream_name"] for c in configs]
-    print(f"[worker_reload] Reloaded workers: {started}/{len(configs)} started")
+    print(f"[worker_reload] Reloaded workers: {started}/{len(configs)} started → {names}")
     return {
         "started": started,
         "total": len(configs),
         "stream_names": names,
+        "mediamtx_config_changed": mtx_changed,
+        "mediamtx_restarted": need_mtx_restart,
     }
 
 
