@@ -630,6 +630,47 @@ def _write_if_changed_atomic(config_path: str, content: str) -> bool:
     return True
 
 
+def _load_cloud_host() -> str:
+    """Cloud hostname from provisioned .env (no scheme/port)."""
+    try:
+        with open("/opt/ively/agent/.env", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("CLOUD_URL="):
+                    host = line.split("=", 1)[1].strip()
+                    return host.replace("https://", "").replace("http://", "").strip("/")
+    except Exception:
+        pass
+    return ""
+
+
+def _webrtc_additional_hosts() -> list[str]:
+    """
+    Hostnames browsers may use to reach this edge via WebRTC (ICE candidates).
+    Override: IVELY_WEBRTC_ADDITIONAL_HOSTS=comma,separated,hosts
+    """
+    hosts: list[str] = []
+    raw = (os.environ.get("IVELY_WEBRTC_ADDITIONAL_HOSTS") or "").strip()
+    if raw:
+        hosts.extend(h.strip() for h in raw.split(",") if h.strip())
+    cloud = _load_cloud_host()
+    if cloud and cloud not in hosts:
+        hosts.append(cloud)
+    for default in ("api.ivelytech.com",):
+        if default not in hosts:
+            hosts.append(default)
+    return hosts
+
+
+def _mediamtx_webrtc_hosts_yaml() -> str:
+    hosts = _webrtc_additional_hosts()
+    if not hosts:
+        return ""
+    lines = ["webrtcAdditionalHosts:"]
+    for h in hosts:
+        lines.append(f"  - {h}")
+    return "\n".join(lines) + "\n"
+
+
 def generate(
     cams,
     config_path: str = "/opt/ively/mediamtx/mediamtx.yml",
@@ -658,8 +699,9 @@ def generate(
 
     prefix = _path_prefix()
     path_label = f"{prefix}_" if prefix else ""
+    webrtc_hosts = _mediamtx_webrtc_hosts_yaml()
 
-    cfg = """# --- Ively SmartEye Edge — MediaMTX Configuration ---
+    cfg = f"""# --- Ively SmartEye Edge — MediaMTX Configuration ---
 # Auto-generated — do not edit manually.
 # FFmpeg workers are managed by ively-agent (CameraWorkerManager),
 # NOT by MediaMTX runOnDemand.
@@ -678,14 +720,17 @@ hlsSegmentDuration: 2s
 hlsSegmentCount: 8
 
 # WebRTC — enabled for low-latency browser viewing
-# Relayed through WireGuard tunnel to cloud MediaMTX → browser.
 webrtc: yes
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: :8189
 webrtcIPsFromInterfaces: yes
-webrtcICEServers2:
+{webrtc_hosts}webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
+
+# Control API — paths/list, stream status (curl http://127.0.0.1:9997/v3/paths/list)
+api: yes
+apiAddress: :9997
 
 # Camera paths — FFmpeg publishes H.264 (browser-safe for HLS/WebRTC).
 # Source may be H.265/HEVC from camera; FFmpeg transcodes.

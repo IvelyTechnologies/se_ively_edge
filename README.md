@@ -95,6 +95,42 @@ You do **not** need to run Provision setup again; only discovery is re-run.
        → [Optional: Rediscover → worker reload]
 ```
 
+### Streaming architecture (enterprise)
+
+Every camera gets **one published path** (e.g. `customer_site_cam1_low`). The pipeline is:
+
+```
+Camera/NVR (any codec: H.265, H.264, MJPEG, …)
+        │
+        ▼  FFmpeg worker (persistent, per camera)
+   Transcode → H.264 (yuv420p, main profile, no B-frames)
+        │
+        ▼  RTSP publish → MediaMTX path (source: publisher)
+        │
+        ├── RTSP  :8554/{path}           ← AI / OpenCV / ffprobe (recommended)
+        ├── HLS   :8888/{path}/index.m3u8 ← browsers, players
+        └── WebRTC :8889/{path}           ← low-latency dashboard
+```
+
+**Guarantees:**
+
+| Layer | Behavior |
+|-------|----------|
+| **Input** | Any RTSP codec from camera/NVR; no NVR menu changes required |
+| **Transcode** | Always **H.264** at configured profile (default 640×360 @ 10fps) |
+| **Output** | Same H.264 stream on **all three** protocols — MediaMTX remuxes only, no second encode |
+| **Readiness** | Path `"ready": true` on `:9997/v3/paths/list` means FFmpeg is publishing |
+
+**Backend integration:** `GET /metrics` includes `stream_endpoints` with `rtsp`, `hls`, and `webrtc` URLs (host = VPN IP when tunnel is up). Prefer **RTSP** for cloud AI ingestion over VPN.
+
+**Encoder profile** (override via `IVELY_STREAM_PROFILES_JSON`):
+
+```json
+{"low": {"width": "640", "height": "360", "fps": "10", "bitrate": "512k"}}
+```
+
+Optional: `IVELY_USE_NVENC=1` for GPU encode; `IVELY_STREAM_ULTRA_LOW=1` for weak links.
+
 ---
 
 ## Important steps for the edge device
@@ -186,7 +222,10 @@ You do **not** need to run Provision setup again.
 | **8080/view** | Stream viewer | http://&lt;device-ip&gt;:8080/view |
 | **8080/provisioned** | Provisioned device & cameras table | http://&lt;device-ip&gt;:8080/provisioned |
 | **8080/vpn-status** | WireGuard VPN status (JSON) | http://&lt;device-ip&gt;:8080/vpn-status |
-| **8889** | MediaMTX WebRTC (used by stream viewer) | — |
+| **8554** | MediaMTX RTSP | `rtsp://&lt;device-ip&gt;:8554/&lt;path&gt;` |
+| **8888** | MediaMTX HLS | `http://&lt;device-ip&gt;:8888/&lt;path&gt;/index.m3u8` |
+| **8889** | MediaMTX WebRTC | `http://&lt;device-ip&gt;:8889/&lt;path&gt;` |
+| **9997** | MediaMTX API (paths/list) | `http://127.0.0.1:9997/v3/paths/list` |
 | **8189** | WebRTC internal UDP/TCP routing ports | — |
 | **51820/udp** | WireGuard VPN tunnel | — |
 
@@ -309,6 +348,8 @@ rtsp://10.20.0.x:8554/customer_site_cam1_low
 | Agent crashes: camera.vault not found | Phase 4 | Normal if agent starts before provisioning. After provisioning, vault is created. Restart agent. |
 | MediaMTX crashes without workers | Phase 4 | MediaMTX config may contain bad paths; check `/opt/ively/mediamtx/mediamtx.yml` (all sources should be `publisher`). |
 | No streams / empty list | Phase 4 / 5 | Cameras on same LAN? Run **Rediscover cameras** from :8080/provisioned or :2025. Check camera credentials in provision form. |
+| RTSP works but HLS/WebRTC 404 | Phase 4 | On edge: `sudo ss -tlnp \| grep -E '8554\|8888\|8889\|9997'`. Config must have `hls: yes`, `webrtc: yes`, `api: yes` in `/opt/ively/mediamtx/mediamtx.yml` (not `/etc/mediamtx/`). Regenerate: rediscover cameras or restart agent after code update; `sudo systemctl restart mediamtx`. List paths: `curl -s http://127.0.0.1:9997/v3/paths/list \| jq` — use exact path names in URLs. |
+| WebRTC “no stream” from cloud browser | Phase 4 | Path must show `"ready": true`. Ensure `webrtcAdditionalHosts` includes your cloud hostname (default: `api.ivelytech.com`). Override: `IVELY_WEBRTC_ADDITIONAL_HOSTS=host1,host2` in agent env. |
 
 ### 13. Enterprise Edge Architecture (Observability & Self-Healing)
 

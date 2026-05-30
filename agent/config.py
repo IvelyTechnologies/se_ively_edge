@@ -26,6 +26,7 @@ CAMS_JSON_PATH = AGENT_DIR / "cams.json"
 RTSP_PORT = 8554
 HLS_PORT = 8888
 WEBRTC_PORT = 8889
+MEDIAMTX_API_PORT = 9997
 AGENT_HTTP_PORT = 8080
 
 # ---------------------------------------------------------------------------
@@ -84,3 +85,25 @@ WEBRTC_ICE_SERVERS = os.environ.get(
 # Heartbeat
 # ---------------------------------------------------------------------------
 HEARTBEAT_INTERVAL_SEC = int(os.environ.get("IVELY_HEARTBEAT_INTERVAL", "60"))
+
+
+def build_published_stream_urls(host: str, path: str) -> dict:
+    """
+    Canonical consumer URLs for one published path.
+
+    FFmpeg publishes H.264 to MediaMTX once; the same path is served as RTSP,
+    HLS, and WebRTC without re-encoding.
+    """
+    h = (host or "127.0.0.1").strip()
+    if h.startswith("https://"):
+        h = h[8:]
+    elif h.startswith("http://"):
+        h = h[7:]
+    h = h.rstrip("/")
+    return {
+        "path": path,
+        "output_codec": "h264",
+        "rtsp": f"rtsp://{h}:{RTSP_PORT}/{path}",
+        "hls": f"http://{h}:{HLS_PORT}/{path}/index.m3u8",
+        "webrtc": f"http://{h}:{WEBRTC_PORT}/{path}",
+    }

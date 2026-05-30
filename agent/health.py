@@ -362,6 +362,19 @@ def metrics_endpoint():
     if _worker_manager is not None:
         data["live_workers"] = _worker_manager.get_all_metrics()
         data["summary"] = _worker_manager.get_summary()
+        try:
+            from agent.config import build_published_stream_urls
+
+            host = "127.0.0.1"
+            vpn = _vpn_status_dict()
+            if vpn and vpn.get("vpn_ip"):
+                host = vpn["vpn_ip"]
+            data["stream_endpoints"] = {
+                name: build_published_stream_urls(host, name)
+                for name in data["live_workers"]
+            }
+        except Exception:
+            pass
     return JSONResponse(data)
 
 
