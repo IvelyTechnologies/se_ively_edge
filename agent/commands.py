@@ -26,7 +26,7 @@ except ImportError:
 # Only commands in this allowlist can be run — no arbitrary shell execution.
 # ---------------------------------------------------------------------------
 DIAGNOSTIC_COMMANDS: dict[str, list[str]] = {
-    "mediamtx_config":  ["grep", "-E", "^(api|hls|webrtc|rtspAddress|paths|webrtcAdditionalHosts)", "/opt/ively/mediamtx/mediamtx.yml"],
+    "mediamtx_config":  ["grep", "-E", "^(api|hls|webrtc|rtspAddress|paths|hlsSegment|webrtcICEServers2)", "/opt/ively/mediamtx/mediamtx.yml"],
     "mediamtx_logs":    ["journalctl", "-u", "mediamtx", "--no-pager", "-n", "50"],
     "mediamtx_ports":   ["ss", "-tlnp"],  # caller can grep for 8554/8888/9997
     "mediamtx_paths":   ["curl", "-s", "http://127.0.0.1:9997/v3/paths/list"],

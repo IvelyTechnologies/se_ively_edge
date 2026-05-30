@@ -169,14 +169,6 @@ HLS_JS_PLAYER_CONFIG = {
 }
 
 # ---------------------------------------------------------------------------
-# WebRTC ICE — STUN by default; TURN opt-in when IVELY_TURN_* is set in .env
-# ---------------------------------------------------------------------------
-WEBRTC_ICE_SERVERS = os.environ.get(
-    "IVELY_WEBRTC_ICE_SERVERS",
-    "stun:stun.l.google.com:19302",
-)
-
-# ---------------------------------------------------------------------------
 # Heartbeat
 # ---------------------------------------------------------------------------
 HEARTBEAT_INTERVAL_SEC = int(os.environ.get("IVELY_HEARTBEAT_INTERVAL", "60"))

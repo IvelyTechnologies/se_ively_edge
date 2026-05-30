@@ -702,16 +702,7 @@ def view():
     function attachHls(videoEl, url) {{
       if (!videoEl) return;
       if (Hls.isSupported()) {{
-        const hls = new Hls(Object.assign({{
-          enableWorker: true,
-          liveSyncDurationCount: 2,
-          liveMaxLatencyDurationCount: 5,
-          maxBufferLength: 8,
-          maxMaxBufferLength: 12,
-          backBufferLength: 0,
-          stretchShortVideoTrack: true,
-          maxLiveSyncPlaybackRate: 1.5,
-        }}, HLS_CONFIG || {{}}));
+        const hls = new Hls(Object.assign({{ enableWorker: true }}, HLS_CONFIG || {{}}));
         hls.loadSource(url);
         hls.attachMedia(videoEl);
         hls.on(Hls.Events.MEDIA_ATTACHED, function() {{

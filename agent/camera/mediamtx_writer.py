@@ -452,8 +452,10 @@ DEFAULT_STREAM_PROFILES: Dict[str, Dict[str, str]] = {
 
 
 def _hls_segment_seconds() -> float:
-    """Parse IVELY_HLS_SEGMENT_DURATION (e.g. 1s) for GOP alignment."""
-    raw = (os.environ.get("IVELY_HLS_SEGMENT_DURATION") or "1s").strip().lower().rstrip("s")
+    """Parse HLS segment duration for GOP alignment (matches _mediamtx_hls_yaml)."""
+    from agent.config import HLS_SEGMENT_DURATION
+
+    raw = (HLS_SEGMENT_DURATION or "1s").strip().lower().rstrip("s")
     try:
         return max(0.5, float(raw))
     except ValueError:
@@ -681,156 +683,6 @@ def _write_if_changed_atomic(config_path: str, content: str) -> bool:
     return True
 
 
-
-def _load_vpn_ip() -> str:
-    """WireGuard VPN IP from provisioned state (e.g. 10.20.0.3)."""
-    try:
-        with open("/opt/ively/agent/wg_state.json", encoding="utf-8") as f:
-            data = json.load(f)
-        return (data.get("vpn_ip") or "").strip()
-    except Exception:
-        return ""
-
-
-def _looks_like_ip(value: str) -> bool:
-    """True if value is IPv4/IPv6 literal (not a DNS hostname)."""
-    v = (value or "").strip()
-    if not v:
-        return False
-    if v.replace(".", "").isdigit() and v.count(".") == 3:
-        return True
-    if ":" in v and not v.endswith("."):
-        return True
-    return False
-
-
-def _read_agent_env(key: str) -> str:
-    """Read one key from provisioned /opt/ively/agent/.env."""
-    try:
-        with open("/opt/ively/agent/.env", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, _, val = line.partition("=")
-                if k.strip() == key:
-                    return val.strip()
-    except Exception:
-        pass
-    return ""
-
-
-def _webrtc_additional_hosts() -> list[str]:
-    """
-    DNS hostnames of the edge MediaMTX server (where :8889/:8189 live).
-    Not the cloud API (api.ivelytech.com) and not TURN (turn.ivelytech.com).
-    VPN edges use webrtcIPsFromInterfacesList: [wg0] instead — leave this empty
-    unless browsers reach the edge by a public/LAN hostname.
-    Override: IVELY_WEBRTC_ADDITIONAL_HOSTS=edge.example.com
-    Set IVELY_WEBRTC_ADDITIONAL_HOSTS=none to force empty.
-    """
-    raw = (os.environ.get("IVELY_WEBRTC_ADDITIONAL_HOSTS") or _read_agent_env("IVELY_WEBRTC_ADDITIONAL_HOSTS") or "").strip()
-    if raw.lower() in ("none", "off", "0", "false", "-"):
-        return []
-    if raw:
-        hosts: list[str] = []
-        for h in raw.split(","):
-            h = h.strip()
-            if h and not _looks_like_ip(h):
-                hosts.append(h)
-        return hosts
-    return []
-
-
-def _env_or_file(key: str, default: str = "") -> str:
-    return (os.environ.get(key) or _read_agent_env(key) or default).strip()
-
-
-def _load_ice_turn_config() -> tuple[list[str], list[tuple[str, str, str]]]:
-    """
-    STUN + optional TURN for webrtcICEServers2.
-    TURN is off by default (no turn.ivelytech.com). Enable only when coturn is running:
-      IVELY_TURN_HOST, IVELY_TURN_USERNAME, IVELY_TURN_PASSWORD in .env
-    """
-    turn_host = _env_or_file("IVELY_TURN_HOST")
-    turn_user = _env_or_file("IVELY_TURN_USERNAME")
-    turn_pass = _env_or_file("IVELY_TURN_PASSWORD")
-
-    stun_raw = _env_or_file("IVELY_STUN_URLS")
-    if stun_raw:
-        stun_urls = [u.strip() for u in stun_raw.split(",") if u.strip()]
-    else:
-        single = _env_or_file("IVELY_STUN_URL", "stun:stun.l.google.com:19302")
-        stun_urls = [single] if single else []
-
-    turn_entries: list[tuple[str, str, str]] = []
-    if turn_host and turn_user and turn_pass:
-        for url in (
-            f"turn:{turn_host}:3478?transport=udp",
-            f"turn:{turn_host}:3478?transport=tcp",
-            f"turns:{turn_host}:5349?transport=tcp",
-        ):
-            turn_entries.append((url, turn_user, turn_pass))
-    else:
-        turn_url = _env_or_file("IVELY_TURN_URL")
-        if turn_url and turn_user and turn_pass:
-            turn_entries.append((turn_url, turn_user, turn_pass))
-
-    return stun_urls, turn_entries
-
-
-def _webrtc_interface_list() -> list[str]:
-    """
-    Network interfaces for WebRTC ICE candidates.
-    When VPN is provisioned, restrict to wg0 so cloud (10.20.0.1) gets 10.20.0.x:8189
-    instead of unreachable LAN IPs (192.168.x.x).
-    Override: IVELY_WEBRTC_INTERFACES=wg0,eth0
-    """
-    raw = (os.environ.get("IVELY_WEBRTC_INTERFACES") or "").strip()
-    if raw:
-        return [i.strip() for i in raw.split(",") if i.strip()]
-    if _load_vpn_ip():
-        return ["wg0"]
-    return []
-
-
-def _mediamtx_webrtc_interface_yaml() -> str:
-    interfaces = _webrtc_interface_list()
-    if not interfaces:
-        return ""
-    lines = ["webrtcIPsFromInterfacesList:"]
-    for iface in interfaces:
-        lines.append(f"  - {iface}")
-    return "\n".join(lines) + "\n"
-
-
-def _mediamtx_webrtc_hosts_yaml() -> str:
-    hosts = _webrtc_additional_hosts()
-    if not hosts:
-        return ""
-    lines = ["webrtcAdditionalHosts:"]
-    for h in hosts:
-        lines.append(f"  - {h}")
-    return "\n".join(lines) + "\n"
-
-
-def _mediamtx_ice_servers_yaml() -> str:
-    """STUN + optional TURN for WebRTC ICE (server-side). TURN only when IVELY_TURN_* is set."""
-    stun_urls, turn_entries = _load_ice_turn_config()
-    lines = ["webrtcICEServers2:"]
-    for url in stun_urls:
-        lines.append(f"  - url: {url}")
-    for url, user, password in turn_entries:
-        lines.append(f"  - url: {url}")
-        if user:
-            lines.append(f"    username: {user}")
-        if password:
-            lines.append(f"    password: {password}")
-    if len(lines) == 1:
-        lines.append("  - url: stun:stun.l.google.com:19302")
-    return "\n".join(lines) + "\n"
-
-
 def generate(
     cams,
     config_path: str = "/opt/ively/mediamtx/mediamtx.yml",
@@ -840,7 +692,7 @@ def generate(
     manufacturer_override: Optional[str] = None,
 ) -> bool:
     """
-    Generate mediamtx.yml: one publisher path per camera stream (`camN_low` only).
+    Generate mediamtx.yml: one publisher path per camera (e.g. `{prefix}_cam1_low`).
 
     Paths use `source: publisher` — FFmpeg is managed by CameraWorkerManager,
     NOT by MediaMTX runOnDemand. This prevents stream teardown when no consumer
@@ -859,9 +711,6 @@ def generate(
 
     prefix = _path_prefix()
     ensure_site_path_prefix(prefix)
-    webrtc_hosts = _mediamtx_webrtc_hosts_yaml()
-    webrtc_ifaces = _mediamtx_webrtc_interface_yaml()
-    webrtc_ice = _mediamtx_ice_servers_yaml()
     hls_block = _mediamtx_hls_yaml()
 
     cfg = f"""# --- Ively SmartEye Edge — MediaMTX Configuration ---
@@ -880,8 +729,9 @@ webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: :8189
 webrtcIPsFromInterfaces: yes
-{webrtc_ifaces}{webrtc_hosts}webrtcHandshakeTimeout: 15s
-{webrtc_ice}
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
+
 # Control API — paths/list, stream status (curl http://127.0.0.1:9997/v3/paths/list)
 api: yes
 apiAddress: :9997

@@ -153,29 +153,19 @@ Camera/NVR (any codec: H.265, H.264, MJPEG, …)
 
 Optional: `IVELY_USE_NVENC=1` for GPU encode; `IVELY_STREAM_ULTRA_LOW=1` for weak links.
 
-**WebRTC ICE (edge)** — VPN direct + Google STUN; TURN optional when coturn is deployed:
+**WebRTC (edge)** — generated `mediamtx.yml` uses all interfaces + Google STUN:
 
 | Role | Setting | Example |
 |------|---------|---------|
 | Cloud API (REST/WebSocket) | `CLOUD_URL` in `.env` | `api.ivelytech.com` |
-| Edge stream (VPN) | `webrtcIPsFromInterfacesList: [wg0]` | `10.20.0.3:8889` / `:8189` |
-| STUN (edge default) | `webrtcICEServers2` | `stun:stun.l.google.com:19302` |
-| TURN (optional) | `IVELY_TURN_*` in `.env` when coturn runs | `turn.ivelytech.com` |
-| **Do not use** | ~~`webrtcAdditionalHosts: api.ivelytech.com`~~ | cloud API ≠ edge WebRTC |
+| Edge WebRTC signaling | `webrtcAddress` | `http://10.20.0.3:8889/{path}` |
+| ICE / media UDP | `webrtcLocalUDPAddress` | `:8189` |
+| STUN (default) | `webrtcICEServers2` | `stun:stun.l.google.com:19302` |
+| Cloud AI ingestion | RTSP (recommended) | `rtsp://10.20.0.3:8554/{path}` |
 
-TURN is **disabled by default** on the edge (Google STUN only). When you deploy coturn, add to `/opt/ively/agent/.env`:
+Generated config sets `webrtcIPsFromInterfaces: yes` (advertises LAN + VPN). For VPN-only ICE, TURN, or custom hosts, edit `/opt/ively/mediamtx/mediamtx.yml` manually and restart MediaMTX.
 
-```bash
-IVELY_TURN_HOST=turn.ivelytech.com
-IVELY_TURN_USERNAME=ivelyturn
-IVELY_TURN_PASSWORD=your_secret
-```
-
-Then `sudo systemctl restart ively-agent mediamtx` and verify:
-
-```bash
-grep -A20 webrtcICEServers2 /opt/ively/mediamtx/mediamtx.yml
-```
+**MediaMTX API** (`:9997`) is localhost-only without credentials. From cloud/VPN use `http://<edge-vpn-ip>:8080/metrics`, or on the edge: `curl -s http://127.0.0.1:9997/v3/paths/list`.
 
 ---
 
@@ -395,8 +385,8 @@ rtsp://10.20.0.x:8554/customer_site_cam1_low
 | MediaMTX crashes without workers | Phase 4 | MediaMTX config may contain bad paths; check `/opt/ively/mediamtx/mediamtx.yml` (all sources should be `publisher`). |
 | No streams / empty list | Phase 4 / 5 | Cameras on same LAN? Run **Rediscover cameras** from :8080/provisioned or :2025. Check camera credentials in provision form. |
 | RTSP works but HLS/WebRTC 404 | Phase 4 | On edge: `sudo ss -tlnp \| grep -E '8554\|8888\|8889\|9997'`. Config must have `hls: yes`, `webrtc: yes`, `api: yes` in `/opt/ively/mediamtx/mediamtx.yml` (not `/etc/mediamtx/`). Regenerate: rediscover cameras or restart agent after code update; `sudo systemctl restart mediamtx`. List paths: `curl -s http://127.0.0.1:9997/v3/paths/list \| jq` — use exact path names in URLs. |
-| WebRTC `deadline exceeded while waiting connection` | Phase 4 | HTTP signaling OK but ICE failed. RTSP from cloud (`10.20.0.1`) working means VPN TCP is fine — WebRTC media uses **UDP/TCP :8189**. On edge: `webrtcIPsFromInterfacesList: [wg0]`. Allow VPN → edge: `sudo ufw allow from 10.20.0.0/16 to any port 8189`. TURN is optional — only set `IVELY_TURN_*` when coturn is actually running. **Cloud AI should use RTSP :8554**. |
-| WebRTC “no stream” from cloud browser | Phase 4 | Path must show `"ready": true`. `webrtcAdditionalHosts` = hostnames of the **edge** WebRTC server (not TURN). Only add `api.ivelytech.com` if browsers open WebRTC at that hostname and DNS routes to the edge. For VPN cloud→edge use `wg0` ICE list. TURN goes in `IVELY_TURN_URL`, not additionalHosts. |
+| WebRTC `deadline exceeded while waiting connection` | Phase 4 | HTTP signaling OK but ICE failed. WebRTC media uses **UDP/TCP :8189**. Allow VPN → edge: `sudo ufw allow from 10.20.0.0/16 to any port 8189`. ICE may advertise unreachable LAN IPs — for VPN-only viewing add `webrtcIPsFromInterfacesList: [wg0]` manually in `mediamtx.yml`, or use **HLS** / **RTSP** from cloud. **Cloud AI should use RTSP :8554**. |
+| WebRTC “no stream” from cloud browser | Phase 4 | Path must show `"ready": true` on edge (`curl http://127.0.0.1:9997/v3/paths/list`). Public browsers need TURN if ICE candidates are private VPN/LAN IPs — edit `webrtcICEServers2` in `mediamtx.yml` when coturn is deployed. Prefer **HLS** (`:8888`) for browser playback over VPN. |
 
 ### 13. Enterprise Edge Architecture (Observability & Self-Healing)
 
