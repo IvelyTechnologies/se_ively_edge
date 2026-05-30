@@ -701,30 +701,23 @@ def _env_or_file(key: str, default: str = "") -> str:
 
 def _load_ice_turn_config() -> tuple[list[str], list[tuple[str, str, str]]]:
     """
-    STUN + TURN for webrtcICEServers2 — matches frontend window.IVELY_ICE_SERVERS.
-    Defaults: turn.ivelytech.com / ivelyturn / ivelytech_2026_turn
-    Override via IVELY_TURN_* in env or /opt/ively/agent/.env
+    STUN + optional TURN for webrtcICEServers2.
+    TURN is off by default (no turn.ivelytech.com). Enable only when coturn is running:
+      IVELY_TURN_HOST, IVELY_TURN_USERNAME, IVELY_TURN_PASSWORD in .env
     """
-    from agent.config import TURN_HOST, TURN_PASSWORD, TURN_USERNAME
-
-    turn_host = _env_or_file("IVELY_TURN_HOST", TURN_HOST)
-    turn_user = _env_or_file("IVELY_TURN_USERNAME", TURN_USERNAME)
-    turn_pass = _env_or_file("IVELY_TURN_PASSWORD", TURN_PASSWORD)
+    turn_host = _env_or_file("IVELY_TURN_HOST")
+    turn_user = _env_or_file("IVELY_TURN_USERNAME")
+    turn_pass = _env_or_file("IVELY_TURN_PASSWORD")
 
     stun_raw = _env_or_file("IVELY_STUN_URLS")
     if stun_raw:
         stun_urls = [u.strip() for u in stun_raw.split(",") if u.strip()]
-    elif turn_user and turn_pass:
-        stun_urls = [
-            f"stun:{turn_host}:3478",
-            "stun:stun.l.google.com:19302",
-        ]
     else:
         single = _env_or_file("IVELY_STUN_URL", "stun:stun.l.google.com:19302")
         stun_urls = [single] if single else []
 
     turn_entries: list[tuple[str, str, str]] = []
-    if turn_user and turn_pass:
+    if turn_host and turn_user and turn_pass:
         for url in (
             f"turn:{turn_host}:3478?transport=udp",
             f"turn:{turn_host}:3478?transport=tcp",
@@ -733,7 +726,7 @@ def _load_ice_turn_config() -> tuple[list[str], list[tuple[str, str, str]]]:
             turn_entries.append((url, turn_user, turn_pass))
     else:
         turn_url = _env_or_file("IVELY_TURN_URL")
-        if turn_url:
+        if turn_url and turn_user and turn_pass:
             turn_entries.append((turn_url, turn_user, turn_pass))
 
     return stun_urls, turn_entries
