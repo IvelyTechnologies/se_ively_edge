@@ -515,6 +515,9 @@ def view():
 
     vpn_ip_json = json.dumps(vpn_ip)
     paths_json = json.dumps(paths)
+    from agent.config import HLS_JS_PLAYER_CONFIG
+
+    hls_js_config_json = json.dumps(HLS_JS_PLAYER_CONFIG)
 
     return f"""
 <!DOCTYPE html>
@@ -561,6 +564,7 @@ def view():
     const WEBRTC_PORT = {WEBRTC_PORT};
     const PATHS       = {paths_json};
     const VPN_IP    = {vpn_ip_json};
+    const HLS_CONFIG  = {hls_js_config_json};
 
     const hostSelect = document.getElementById('host-select');
     const vpnBadge   = document.getElementById('vpn-badge');
@@ -688,12 +692,31 @@ def view():
     function attachHls(videoEl, url) {{
       if (!videoEl) return;
       if (Hls.isSupported()) {{
-        const hls = new Hls({{ enableWorker: true, lowLatencyMode: true }});
+        const hls = new Hls(Object.assign({{
+          enableWorker: true,
+          liveSyncDurationCount: 2,
+          liveMaxLatencyDurationCount: 5,
+          maxBufferLength: 8,
+          maxMaxBufferLength: 12,
+          backBufferLength: 0,
+          stretchShortVideoTrack: true,
+          maxLiveSyncPlaybackRate: 1.5,
+        }}, HLS_CONFIG || {{}}));
         hls.loadSource(url);
         hls.attachMedia(videoEl);
+        hls.on(Hls.Events.MEDIA_ATTACHED, function() {{
+          videoEl.play().catch(function() {{}});
+        }});
         hls.on(Hls.Events.ERROR, function(event, data) {{
           if (data.fatal) {{
-            videoEl.poster = '';
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {{
+              hls.startLoad();
+              return;
+            }}
+            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {{
+              hls.recoverMediaError();
+              return;
+            }}
             videoEl.parentElement.innerHTML = `
               <div class="stream-video" style="display: flex; align-items: center; justify-content: center; color: var(--danger); font-size: 0.875rem;">
                 Stream unavailable — waiting for camera feed
@@ -704,6 +727,7 @@ def view():
       }} else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {{
         // Native HLS (Safari)
         videoEl.src = url;
+        videoEl.play().catch(function() {{}});
       }}
     }}
 

@@ -409,6 +409,18 @@ class CameraWorkerManager:
             return False
         return worker.restart()
 
+    def force_restart_worker(self, name: str) -> bool:
+        """Clear cooldown and restart one worker (escalated recovery)."""
+        with self._lock:
+            worker = self._workers.get(name)
+        if worker is None:
+            return False
+        self._restart_tracker.clear(name)
+        print(f"[manager] Force restart {name} (cooldown cleared)")
+        worker.stop()
+        time.sleep(1)
+        return worker.start()
+
     def health_check_all(self) -> Dict[str, str]:
         """
         Check all workers. Restart unhealthy ones (with cooldown).

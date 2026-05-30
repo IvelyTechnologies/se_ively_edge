@@ -439,10 +439,48 @@ DEFAULT_STREAM_PROFILES: Dict[str, Dict[str, str]] = {
         "bitrate": "512k",
         "maxrate": "580k",
         "bufsize": "1024k",
-        "gop": "20",
+        "gop": "10",
         "keyint_min": "10",
     },
 }
+
+
+def _hls_segment_seconds() -> float:
+    """Parse IVELY_HLS_SEGMENT_DURATION (e.g. 1s) for GOP alignment."""
+    raw = (os.environ.get("IVELY_HLS_SEGMENT_DURATION") or "1s").strip().lower().rstrip("s")
+    try:
+        return max(0.5, float(raw))
+    except ValueError:
+        return 1.0
+
+
+def _sync_gop_to_hls(profile: Dict[str, str]) -> None:
+    """Keyframe interval = HLS segment length → clean cuts, less stall/rebuffer."""
+    fps = float(profile.get("fps") or "10")
+    gop = max(1, int(round(fps * _hls_segment_seconds())))
+    profile["gop"] = str(gop)
+    profile["keyint_min"] = str(gop)
+
+
+def _mediamtx_hls_yaml() -> str:
+    """HLS server block — tuned for smooth browser playback."""
+    from agent.config import (
+        HLS_MUXER_CLOSE_AFTER,
+        HLS_SEGMENT_COUNT,
+        HLS_SEGMENT_DURATION,
+        HLS_VARIANT,
+    )
+
+    return f"""# HLS server — smooth live (GOP aligned to segment duration in FFmpeg)
+hls: yes
+hlsAddress: :8888
+hlsVariant: {HLS_VARIANT}
+hlsAlwaysRemux: yes
+hlsSegmentDuration: {HLS_SEGMENT_DURATION}
+hlsSegmentCount: {HLS_SEGMENT_COUNT}
+hlsMuxerCloseAfter: {HLS_MUXER_CLOSE_AFTER}
+hlsAllowOrigins: ['*']
+"""
 
 
 def _load_stream_profiles() -> Dict[str, Dict[str, str]]:
@@ -466,21 +504,21 @@ def _load_stream_profiles() -> Dict[str, Dict[str, str]]:
         )
 
     raw = (os.environ.get("IVELY_STREAM_PROFILES_JSON") or "").strip()
-    if not raw:
-        return merged
-    try:
-        parsed = json.loads(raw)
-        if not isinstance(parsed, dict):
-            return merged
-        override = parsed.get("low")
-        if isinstance(override, dict):
-            for key in merged["low"].keys():
-                val = override.get(key)
-                if val is not None:
-                    merged["low"][key] = str(val)
-        return merged
-    except Exception:
-        return merged
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                override = parsed.get("low")
+                if isinstance(override, dict):
+                    for key in merged["low"].keys():
+                        val = override.get(key)
+                        if val is not None:
+                            merged["low"][key] = str(val)
+        except Exception:
+            pass
+
+    _sync_gop_to_hls(merged["low"])
+    return merged
 
 
 def _ffmpeg_transcode_publish_command(
@@ -568,6 +606,8 @@ def _ffmpeg_transcode_publish_command(
         f"scale={profile['width']}:{profile['height']}:force_original_aspect_ratio=decrease",
         "-r",
         profile["fps"],
+        "-vsync",
+        "cfr",
         "-g",
         profile["gop"],
         "-keyint_min",
@@ -816,6 +856,7 @@ def generate(
     webrtc_hosts = _mediamtx_webrtc_hosts_yaml()
     webrtc_ifaces = _mediamtx_webrtc_interface_yaml()
     webrtc_ice = _mediamtx_ice_servers_yaml()
+    hls_block = _mediamtx_hls_yaml()
 
     cfg = f"""# --- Ively SmartEye Edge — MediaMTX Configuration ---
 # Auto-generated — do not edit manually.
@@ -826,15 +867,7 @@ def generate(
 rtsp: yes
 rtspAddress: :8554
 
-# HLS server
-hls: yes
-hlsAddress: :8888
-# Stability-first HLS for non-browser FFmpeg/OpenCV clients
-hlsVariant: mpegts
-hlsAlwaysRemux: yes
-hlsSegmentDuration: 2s
-hlsSegmentCount: 8
-
+{hls_block}
 # WebRTC — enabled for low-latency browser viewing
 webrtc: yes
 webrtcAddress: :8889

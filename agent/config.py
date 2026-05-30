@@ -35,6 +35,8 @@ AGENT_HTTP_PORT = 8080
 WORKER_MAX_RESTARTS = int(os.environ.get("IVELY_WORKER_MAX_RESTARTS", "3"))
 WORKER_COOLDOWN_SEC = int(os.environ.get("IVELY_WORKER_COOLDOWN_SEC", "300"))
 WORKER_HEALTH_CHECK_SEC = 15  # how often workers check their FFmpeg process
+STREAM_RECOVERY_INTERVAL_SEC = int(os.environ.get("IVELY_STREAM_RECOVERY_INTERVAL", "20"))
+STREAM_NOT_READY_ESCALATE_SEC = int(os.environ.get("IVELY_STREAM_NOT_READY_ESCALATE", "90"))
 
 # Substream-only RTSP (no main-stream fallback). Default IVELY_SUBSTREAM_ONLY=1.
 # Set IVELY_SUBSTREAM_ONLY=0 to also try main stream (e.g. subtype=0 on Dahua).
@@ -72,6 +74,28 @@ METRICS_INTERVAL_SEC = int(os.environ.get("IVELY_METRICS_INTERVAL", "30"))
 LOCAL_BUFFER_HOURS = int(os.environ.get("IVELY_BUFFER_HOURS", "24"))
 LOCAL_BUFFER_SEGMENT_SEC = 60  # each segment is 60 seconds
 LOCAL_BUFFER_MAX_DISK_PERCENT = float(os.environ.get("IVELY_BUFFER_MAX_DISK", "80.0"))
+
+# ---------------------------------------------------------------------------
+# HLS (MediaMTX + browser player) — smooth live with ~3–5s end-user latency
+# Override: IVELY_HLS_SEGMENT_DURATION=1s, IVELY_HLS_SEGMENT_COUNT=6
+# Keep mpegts (stable); fMP4/lowLatency caused MOOV errors on some clients.
+# ---------------------------------------------------------------------------
+HLS_SEGMENT_DURATION = os.environ.get("IVELY_HLS_SEGMENT_DURATION", "1s")
+HLS_SEGMENT_COUNT = int(os.environ.get("IVELY_HLS_SEGMENT_COUNT", "6"))
+HLS_VARIANT = os.environ.get("IVELY_HLS_VARIANT", "mpegts")
+HLS_MUXER_CLOSE_AFTER = os.environ.get("IVELY_HLS_MUXER_CLOSE_AFTER", "60s")
+
+# hls.js tuning for live MPEG-TS (passed to /view player)
+HLS_JS_PLAYER_CONFIG = {
+    "enableWorker": True,
+    "liveSyncDurationCount": 2,
+    "liveMaxLatencyDurationCount": 5,
+    "maxBufferLength": 8,
+    "maxMaxBufferLength": 12,
+    "backBufferLength": 0,
+    "stretchShortVideoTrack": True,
+    "maxLiveSyncPlaybackRate": 1.5,
+}
 
 # ---------------------------------------------------------------------------
 # WebRTC ICE — STUN by default; TURN opt-in when IVELY_TURN_* is set in .env

@@ -108,9 +108,11 @@ Camera/NVR (any codec: H.265, H.264, MJPEG, …)
         ▼  RTSP publish → MediaMTX path (source: publisher)
         │
         ├── RTSP  :8554/{path}           ← AI / OpenCV / ffprobe (recommended)
-        ├── HLS   :8888/{path}/index.m3u8 ← browsers, players
-        └── WebRTC :8889/{path}           ← low-latency dashboard
+        ├── HLS   :8888/{path}/index.m3u8 ← browsers (~3–5s latency, smooth)
+        └── WebRTC :8889/{path}           ← lowest latency dashboard
 ```
+
+**HLS tuning (smooth live):** 1s segments, GOP aligned to segment length, mpegts remux, hls.js live sync. Override via `IVELY_HLS_SEGMENT_DURATION`, `IVELY_HLS_SEGMENT_COUNT`. For lowest delay use **WebRTC**; for stable browser playback use **HLS**.
 
 **Guarantees:**
 
@@ -386,6 +388,22 @@ The edge system now natively runs an **Enterprise Worker Architecture** prioriti
 - **Deep Freeze Detection**: The local watchdog scans local streaming pipes for locked bitrates, delayed/stalled frame decoding, and low FPS counts. If a stream freezes, the agent restarts *only* the single broken worker, leaving all other 99 cameras online.
 - **SQLite Database Metrics**: CPU, memory, Disk percentage, WireGuard Tunnel heartbeats, individual stream FPS, reconnects, and bitrates are synced every 30 seconds to `/opt/ively/agent/metrics.db` (retention: 7 days).
 - **WebRTC Enabled by Default**: MediaMTX is bound out-of-the-box with Google's STUN for millisecond latency on the `http://<device-ip>:8080/view` dashboard.
+
+**Automatic stream recovery (always on):**
+
+| Issue | Recovery action | Interval |
+|-------|-----------------|----------|
+| FFmpeg crash / exit | Restart that camera worker | ~20s |
+| Frozen / stalled / low FPS | Restart that worker | ~20s |
+| MediaMTX path `ready: false` | Restart publisher worker | ~20s |
+| Worker in cooldown but still down | Force restart (clear cooldown) | after ~90s |
+| Path/worker/MediaMTX drift | Full reload (regen yml + MediaMTX + workers) | after ~90s, max once / 2min |
+| MediaMTX service dead | `systemctl restart mediamtx` + recovery | ~30s watchdog |
+| VPN tunnel stale | Restart WireGuard | ~30s watchdog |
+| Internet returns | Restart agent + VPN | watchdog |
+| Periodic | Rediscover cameras from `cams.json` | default 600s |
+
+Tune: `IVELY_STREAM_RECOVERY_INTERVAL=20`, `IVELY_STREAM_NOT_READY_ESCALATE=90`, `IVELY_WORKER_MAX_RESTARTS=3`.
 
 **How to observe the health API (JSON):**
 

@@ -11,7 +11,7 @@
 import threading
 import time
 
-from agent.config import METRICS_INTERVAL_SEC
+from agent.config import METRICS_INTERVAL_SEC, STREAM_RECOVERY_INTERVAL_SEC
 
 # ---------------------------------------------------------------------------
 # 1. One-shot migration: strip stale `DNS = ...` line from wg0.conf
@@ -42,6 +42,25 @@ def _load_and_start_workers() -> None:
 
 # Start workers in a background thread so we don't block the health server
 threading.Thread(target=_load_and_start_workers, name="worker-init", daemon=True).start()
+
+
+def _stream_recovery_loop() -> None:
+    """Fast recovery loop — between watchdog cycles."""
+    from agent.camera.stream_recovery import recover_streams
+
+    time.sleep(20)
+    while True:
+        try:
+            result = recover_streams(worker_manager)
+            for line in result.get("actions") or []:
+                if line and not line.endswith(": cooldown"):
+                    print(f"[recovery] {line}")
+        except Exception as e:
+            print(f"[recovery] Error: {e}")
+        time.sleep(STREAM_RECOVERY_INTERVAL_SEC)
+
+
+threading.Thread(target=_stream_recovery_loop, name="stream-recovery", daemon=True).start()
 
 # ---------------------------------------------------------------------------
 # 3. Metrics collection loop — records camera + system health to SQLite

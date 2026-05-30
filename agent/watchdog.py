@@ -121,17 +121,15 @@ def _check_wireguard() -> None:
 
 
 def _check_camera_workers() -> None:
-    """
-    Check all camera workers and restart only those that are unhealthy.
-    This replaces the old approach of restarting all of MediaMTX.
-    """
+    """Legacy hook — recovery is handled by stream_recovery.recover_streams."""
     if _worker_manager is None:
         return
+    try:
+        from agent.camera.stream_recovery import recover_streams
 
-    unhealthy = _worker_manager.health_check_all()
-    if unhealthy:
-        for name, status in unhealthy.items():
-            print(f"[watchdog] Camera {name}: {status}")
+        recover_streams(_worker_manager)
+    except Exception as e:
+        print(f"[watchdog] Camera recovery error: {e}")
 
 
 def watchdog_loop(
@@ -159,14 +157,29 @@ def watchdog_loop(
             #    Camera stream issues are handled by per-camera workers.
             if not check_service("mediamtx"):
                 restart_service("mediamtx")
-                # Give MediaMTX time to start before workers reconnect
                 time.sleep(5)
+                if _worker_manager is not None:
+                    try:
+                        from agent.camera.stream_recovery import recover_streams
+
+                        recover_streams(_worker_manager)
+                    except Exception as e:
+                        print(f"[watchdog] Post-MediaMTX recovery error: {e}")
 
             if not check_service("ively-agent"):
                 restart_service("ively-agent")
 
-            # 2) Per-camera worker health — restart ONLY failed workers
-            _check_camera_workers()
+            # 2) Per-camera recovery — workers + MediaMTX ready + escalation
+            if _worker_manager is not None:
+                try:
+                    from agent.camera.stream_recovery import recover_streams
+
+                    result = recover_streams(_worker_manager)
+                    for line in result.get("actions") or []:
+                        if line:
+                            print(f"[watchdog] Recovery: {line}")
+                except Exception as e:
+                    print(f"[watchdog] Stream recovery error: {e}")
 
             # 3) CPU monitoring — log warning, do NOT restart MediaMTX
             if HAS_PSUTIL:
