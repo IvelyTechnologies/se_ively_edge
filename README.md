@@ -131,6 +131,30 @@ Camera/NVR (any codec: H.265, H.264, MJPEG, …)
 
 Optional: `IVELY_USE_NVENC=1` for GPU encode; `IVELY_STREAM_ULTRA_LOW=1` for weak links.
 
+**WebRTC ICE (edge ↔ browser)** — must match frontend `window.IVELY_ICE_SERVERS`:
+
+| Role | Setting | Example |
+|------|---------|---------|
+| Cloud API (REST/WebSocket) | `CLOUD_URL` in `.env` | `api.ivelytech.com` |
+| TURN relay (both sides) | `IVELY_TURN_*` in edge `.env` + frontend ICE | `turn.ivelytech.com` |
+| Edge stream host (VPN) | `webrtcIPsFromInterfacesList: [wg0]` | `10.20.0.3:8889` / `:8189` |
+| **Not** edge WebRTC host | ~~`webrtcAdditionalHosts: api.ivelytech.com`~~ | wrong — that is cloud API |
+
+On each edge device (optional — these are already the code defaults):
+
+```bash
+IVELY_TURN_HOST=turn.ivelytech.com
+IVELY_TURN_USERNAME=ivelyturn
+IVELY_TURN_PASSWORD=ivelytech_2026_turn
+IVELY_WEBRTC_ADDITIONAL_HOSTS=none
+```
+
+Then `sudo systemctl restart ively-agent mediamtx` and verify:
+
+```bash
+grep -A20 webrtcICEServers2 /opt/ively/mediamtx/mediamtx.yml
+```
+
 ---
 
 ## Important steps for the edge device
@@ -349,7 +373,8 @@ rtsp://10.20.0.x:8554/customer_site_cam1_low
 | MediaMTX crashes without workers | Phase 4 | MediaMTX config may contain bad paths; check `/opt/ively/mediamtx/mediamtx.yml` (all sources should be `publisher`). |
 | No streams / empty list | Phase 4 / 5 | Cameras on same LAN? Run **Rediscover cameras** from :8080/provisioned or :2025. Check camera credentials in provision form. |
 | RTSP works but HLS/WebRTC 404 | Phase 4 | On edge: `sudo ss -tlnp \| grep -E '8554\|8888\|8889\|9997'`. Config must have `hls: yes`, `webrtc: yes`, `api: yes` in `/opt/ively/mediamtx/mediamtx.yml` (not `/etc/mediamtx/`). Regenerate: rediscover cameras or restart agent after code update; `sudo systemctl restart mediamtx`. List paths: `curl -s http://127.0.0.1:9997/v3/paths/list \| jq` — use exact path names in URLs. |
-| WebRTC “no stream” from cloud browser | Phase 4 | Path must show `"ready": true`. Ensure `webrtcAdditionalHosts` includes your cloud hostname (default: `api.ivelytech.com`). Override: `IVELY_WEBRTC_ADDITIONAL_HOSTS=host1,host2` in agent env. |
+| WebRTC `deadline exceeded while waiting connection` | Phase 4 | HTTP signaling OK but ICE failed. RTSP from cloud (`10.20.0.1`) working means VPN TCP is fine — WebRTC media uses **UDP/TCP :8189**. On edge: config should include `webrtcIPsFromInterfacesList: [wg0]` (auto when VPN provisioned). Allow VPN → edge: `sudo ufw allow from 10.20.0.0/16 to any port 8189`. Test from cloud: `nc -vzu 10.20.0.3 8189`. Configure **TURN** in `webrtcICEServers2` (`IVELY_TURN_URL=turn:turn.ivelytech.com:3478` + credentials in `.env`). **Cloud AI should use RTSP :8554**, not WebRTC. |
+| WebRTC “no stream” from cloud browser | Phase 4 | Path must show `"ready": true`. `webrtcAdditionalHosts` = hostnames of the **edge** WebRTC server (not TURN). Only add `api.ivelytech.com` if browsers open WebRTC at that hostname and DNS routes to the edge. For VPN cloud→edge use `wg0` ICE list. TURN goes in `IVELY_TURN_URL`, not additionalHosts. |
 
 ### 13. Enterprise Edge Architecture (Observability & Self-Healing)
 

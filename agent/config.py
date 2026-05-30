@@ -74,8 +74,11 @@ LOCAL_BUFFER_SEGMENT_SEC = 60  # each segment is 60 seconds
 LOCAL_BUFFER_MAX_DISK_PERCENT = float(os.environ.get("IVELY_BUFFER_MAX_DISK", "80.0"))
 
 # ---------------------------------------------------------------------------
-# WebRTC (Google STUN)
+# WebRTC ICE (aligned with frontend window.IVELY_ICE_SERVERS)
 # ---------------------------------------------------------------------------
+TURN_HOST = os.environ.get("IVELY_TURN_HOST", "turn.ivelytech.com")
+TURN_USERNAME = os.environ.get("IVELY_TURN_USERNAME", "ivelyturn")
+TURN_PASSWORD = os.environ.get("IVELY_TURN_PASSWORD", "ivelytech_2026_turn")
 WEBRTC_ICE_SERVERS = os.environ.get(
     "IVELY_WEBRTC_ICE_SERVERS",
     "stun:stun.l.google.com:19302",
