@@ -131,14 +131,15 @@ Camera/NVR (any codec: H.265, H.264, MJPEG, …)
 
 Optional: `IVELY_USE_NVENC=1` for GPU encode; `IVELY_STREAM_ULTRA_LOW=1` for weak links.
 
-**WebRTC ICE (edge ↔ browser)** — must match frontend `window.IVELY_ICE_SERVERS`:
+**WebRTC ICE (edge)** — VPN direct + Google STUN; TURN optional when coturn is deployed:
 
 | Role | Setting | Example |
 |------|---------|---------|
 | Cloud API (REST/WebSocket) | `CLOUD_URL` in `.env` | `api.ivelytech.com` |
-| TURN relay (optional) | `IVELY_TURN_*` in edge `.env` only when coturn is running | e.g. `turn.ivelytech.com` |
-| Edge stream host (VPN) | `webrtcIPsFromInterfacesList: [wg0]` | `10.20.0.3:8889` / `:8189` |
-| **Not** edge WebRTC host | ~~`webrtcAdditionalHosts: api.ivelytech.com`~~ | wrong — that is cloud API |
+| Edge stream (VPN) | `webrtcIPsFromInterfacesList: [wg0]` | `10.20.0.3:8889` / `:8189` |
+| STUN (edge default) | `webrtcICEServers2` | `stun:stun.l.google.com:19302` |
+| TURN (optional) | `IVELY_TURN_*` in `.env` when coturn runs | `turn.ivelytech.com` |
+| **Do not use** | ~~`webrtcAdditionalHosts: api.ivelytech.com`~~ | cloud API ≠ edge WebRTC |
 
 TURN is **disabled by default** on the edge (Google STUN only). When you deploy coturn, add to `/opt/ively/agent/.env`:
 

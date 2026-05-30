@@ -70,6 +70,11 @@ def reload_workers(manager: "CameraWorkerManager") -> Dict[str, Any]:
         or planned_names != file_paths
     )
     if need_mtx_restart:
+        if not mtx_changed and running_names != planned_names:
+            print(
+                f"[worker_reload] Path drift: workers={sorted(running_names)} "
+                f"planned={sorted(planned_names)} file={sorted(file_paths)}"
+            )
         reason = "config changed" if mtx_changed else "path name drift"
         print(f"[worker_reload] Restarting MediaMTX ({reason})")
         subprocess.run(

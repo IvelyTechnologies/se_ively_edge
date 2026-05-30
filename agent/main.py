@@ -35,17 +35,7 @@ def _load_and_start_workers() -> None:
     Load camera configs and start persistent FFmpeg workers.
     Workers publish to MediaMTX (which must already be running).
     """
-    from agent.camera.pipeline import wait_for_mediamtx
-    from agent.camera.worker_reload import build_worker_configs, reload_workers
-
-    if not wait_for_mediamtx(timeout_sec=45):
-        print("[main] WARNING: MediaMTX not ready; delaying worker start")
-        time.sleep(5)
-
-    configs = build_worker_configs()
-    if not configs:
-        print("[main] No cameras configured — workers will start after provisioning")
-        return
+    from agent.camera.worker_reload import reload_workers
 
     reload_workers(worker_manager)
 

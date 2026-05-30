@@ -152,22 +152,19 @@ def _manufacturer_from_model(model: str) -> str:
 
 
 def _path_prefix() -> str:
-    """Customer and site from provisioning; sanitized for use in path names (e.g. acme_warehouse_a)."""
+    """Customer_site prefix from site.json (e.g. sivakumar_main_office). Empty if not provisioned."""
     try:
         with open(SITE_CONFIG_PATH, encoding="utf-8") as f:
             data = json.load(f)
-        customer = (data.get("customer") or "customer").strip()
-        site = (data.get("site") or "site").strip()
-        # Alphanumeric + underscore only, collapse spaces to single underscore
-        raw = f"{customer}_{site}".strip("_")
-        sanitized = re.sub(r"[^a-zA-Z0-9_]+", "_", raw).strip("_") or "default"
-        prefix = sanitized.lower()
-        if prefix == "default":
-            print("[mediamtx_writer] WARNING: site.json missing customer/site — paths use camN_low only")
-        return prefix
     except Exception:
-        print("[mediamtx_writer] WARNING: cannot read site.json — paths use camN_low only")
         return ""
+    customer = (data.get("customer") or "").strip()
+    site = (data.get("site") or "").strip()
+    if not customer or not site:
+        return ""
+    raw = f"{customer}_{site}".strip("_")
+    sanitized = re.sub(r"[^a-zA-Z0-9_]+", "_", raw).strip("_")
+    return sanitized.lower() if sanitized else ""
 
 
 def _load_manufacturer_override(path: str = MANUFACTURER_OVERRIDE_PATH) -> Optional[str]:
@@ -579,8 +576,12 @@ def _ffmpeg_transcode_publish_command(
         "0",
         "-pix_fmt",
         "yuv420p",
+        "-pkt_size",
+        "1200",
         "-f",
         "rtsp",
+        "-rtsp_transport",
+        "tcp",
         publish_to,
     ]
     return " ".join(parts)
@@ -768,10 +769,7 @@ def _mediamtx_webrtc_hosts_yaml() -> str:
 
 
 def _mediamtx_ice_servers_yaml() -> str:
-    """
-    STUN + TURN for WebRTC ICE (server-side). Must match frontend IVELY_ICE_SERVERS.
-    TURN host (turn.ivelytech.com) is NOT webrtcAdditionalHosts.
-    """
+    """STUN + optional TURN for WebRTC ICE (server-side). TURN only when IVELY_TURN_* is set."""
     stun_urls, turn_entries = _load_ice_turn_config()
     lines = ["webrtcICEServers2:"]
     for url in stun_urls:
