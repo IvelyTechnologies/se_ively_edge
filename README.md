@@ -132,7 +132,7 @@ Camera/NVR (any codec: H.265, H.264, MJPEG, …)
         └── WebRTC :8889/{path}           ← lowest latency dashboard
 ```
 
-**HLS tuning (smooth live):** 1s segments, GOP aligned to segment length, mpegts remux, hls.js live sync. Override via `IVELY_HLS_SEGMENT_DURATION`, `IVELY_HLS_SEGMENT_COUNT`. For lowest delay use **WebRTC**; for stable browser playback use **HLS**.
+**HLS tuning (smooth live):** 1s segments, 10-segment window, GOP aligned to segment length, mpegts remux. Override via `IVELY_HLS_SEGMENT_DURATION`, `IVELY_HLS_SEGMENT_COUNT`, `IVELY_HLS_MUXER_CLOSE_AFTER`. For **mobile HLS via api.ivelytech.com**, set **`IVELY_HLS_CDN_SECRET`** (or `/opt/ively/agent/hls_cdn_secret`) — see **[docs/HLS_MOBILE_PROXY.md](docs/HLS_MOBILE_PROXY.md)**. For lowest delay use **WebRTC**; for stable mobile playback use **HLS** through the public proxy.
 
 **Guarantees:**
 
@@ -385,6 +385,7 @@ rtsp://10.20.0.x:8554/customer_site_cam1_low
 | MediaMTX crashes without workers | Phase 4 | MediaMTX config may contain bad paths; check `/opt/ively/mediamtx/mediamtx.yml` (all sources should be `publisher`). |
 | No streams / empty list | Phase 4 / 5 | Cameras on same LAN? Run **Rediscover cameras** from :8080/provisioned or :2025. Check camera credentials in provision form. |
 | RTSP works but HLS/WebRTC 404 | Phase 4 | On edge: `sudo ss -tlnp \| grep -E '8554\|8888\|8889\|9997'`. Config must have `hls: yes`, `webrtc: yes`, `api: yes` in `/opt/ively/mediamtx/mediamtx.yml` (not `/etc/mediamtx/`). Regenerate: rediscover cameras or restart agent after code update; `sudo systemctl restart mediamtx`. List paths: `curl -s http://127.0.0.1:9997/v3/paths/list \| jq` — use exact path names in URLs. |
+| Mobile HLS stops / ExoPlayer 404 on segment | Phase 4 / cloud | Playlists OK via `api.ivelytech.com/edge-stream/...` but `.ts` 401/404 — set matching **`hlsCDNSecret`** on edge + nginx `Authorization: Bearer` on API server. See **[docs/HLS_MOBILE_PROXY.md](docs/HLS_MOBILE_PROXY.md)**. |
 | WebRTC `deadline exceeded while waiting connection` | Phase 4 | HTTP signaling OK but ICE failed. WebRTC media uses **UDP/TCP :8189**. Allow VPN → edge: `sudo ufw allow from 10.20.0.0/16 to any port 8189`. ICE may advertise unreachable LAN IPs — for VPN-only viewing add `webrtcIPsFromInterfacesList: [wg0]` manually in `mediamtx.yml`, or use **HLS** / **RTSP** from cloud. **Cloud AI should use RTSP :8554**. |
 | WebRTC “no stream” from cloud browser | Phase 4 | Path must show `"ready": true` on edge (`curl http://127.0.0.1:9997/v3/paths/list`). Public browsers need TURN if ICE candidates are private VPN/LAN IPs — edit `webrtcICEServers2` in `mediamtx.yml` when coturn is deployed. Prefer **HLS** (`:8888`) for browser playback over VPN. |
 

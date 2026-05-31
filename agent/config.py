@@ -148,13 +148,36 @@ LOCAL_BUFFER_MAX_DISK_PERCENT = float(os.environ.get("IVELY_BUFFER_MAX_DISK", "8
 
 # ---------------------------------------------------------------------------
 # HLS (MediaMTX + browser player) — smooth live with ~3–5s end-user latency
-# Override: IVELY_HLS_SEGMENT_DURATION=1s, IVELY_HLS_SEGMENT_COUNT=6
+# Override: IVELY_HLS_SEGMENT_DURATION=1s, IVELY_HLS_SEGMENT_COUNT=10
 # Keep mpegts (stable); fMP4/lowLatency caused MOOV errors on some clients.
+#
+# Mobile HLS via api.ivelytech.com /edge-stream/ requires hlsCDNSecret on the
+# edge matching nginx Authorization: Bearer on the API server (se_backend doc 7.3.2).
+# Set IVELY_HLS_CDN_SECRET or /opt/ively/agent/hls_cdn_secret, then regenerate
+# mediamtx.yml (rediscover cameras or restart agent pipeline).
 # ---------------------------------------------------------------------------
 HLS_SEGMENT_DURATION = os.environ.get("IVELY_HLS_SEGMENT_DURATION", "1s")
-HLS_SEGMENT_COUNT = int(os.environ.get("IVELY_HLS_SEGMENT_COUNT", "6"))
+HLS_SEGMENT_COUNT = int(os.environ.get("IVELY_HLS_SEGMENT_COUNT", "10"))
 HLS_VARIANT = os.environ.get("IVELY_HLS_VARIANT", "mpegts")
-HLS_MUXER_CLOSE_AFTER = os.environ.get("IVELY_HLS_MUXER_CLOSE_AFTER", "60s")
+HLS_MUXER_CLOSE_AFTER = os.environ.get("IVELY_HLS_MUXER_CLOSE_AFTER", "300s")
+
+_HLS_CDN_SECRET_PATH = AGENT_DIR / "hls_cdn_secret"
+
+
+def load_hls_cdn_secret() -> str:
+    """Shared secret for MediaMTX hlsCDNSecret (must match API nginx Bearer token)."""
+    env = (os.environ.get("IVELY_HLS_CDN_SECRET") or "").strip()
+    if env:
+        return env
+    try:
+        if _HLS_CDN_SECRET_PATH.is_file():
+            return _HLS_CDN_SECRET_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    return ""
+
+
+HLS_CDN_SECRET = load_hls_cdn_secret()
 
 # hls.js tuning for live MPEG-TS (passed to /view player)
 HLS_JS_PLAYER_CONFIG = {

@@ -473,13 +473,20 @@ def _sync_gop_to_hls(profile: Dict[str, str]) -> None:
 def _mediamtx_hls_yaml() -> str:
     """HLS server block — tuned for smooth browser playback."""
     from agent.config import (
+        HLS_CDN_SECRET,
         HLS_MUXER_CLOSE_AFTER,
         HLS_SEGMENT_COUNT,
         HLS_SEGMENT_DURATION,
         HLS_VARIANT,
     )
 
+    cdn_secret_line = ""
+    if HLS_CDN_SECRET:
+        cdn_secret_line = f'hlsCDNSecret: "{HLS_CDN_SECRET}"\n'
+
     return f"""# HLS server — smooth live (GOP aligned to segment duration in FFmpeg)
+# When proxied via api.ivelytech.com /edge-stream/, hlsCDNSecret must match nginx
+# Authorization: Bearer (see se_backend documents/UBUNTU_2404_DEPLOYMENT_GUIDE.md §7.3.2).
 hls: yes
 hlsAddress: :8888
 hlsVariant: {HLS_VARIANT}
@@ -487,7 +494,7 @@ hlsAlwaysRemux: yes
 hlsSegmentDuration: {HLS_SEGMENT_DURATION}
 hlsSegmentCount: {HLS_SEGMENT_COUNT}
 hlsMuxerCloseAfter: {HLS_MUXER_CLOSE_AFTER}
-hlsAllowOrigins: ['*']
+{cdn_secret_line}hlsAllowOrigins: ['*']
 """
 
 
