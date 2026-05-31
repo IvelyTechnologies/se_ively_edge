@@ -163,6 +163,12 @@ HLS_MUXER_CLOSE_AFTER = os.environ.get("IVELY_HLS_MUXER_CLOSE_AFTER", "300s")
 
 _HLS_CDN_SECRET_PATH = AGENT_DIR / "hls_cdn_secret"
 
+# Fleet default — must match api.ivelytech.com nginx Authorization Bearer (se_backend §7.3.2).
+# Override per device: IVELY_HLS_CDN_SECRET env or /opt/ively/agent/hls_cdn_secret
+HLS_CDN_SECRET_DEFAULT = (
+    "7848c36cef9136c35d5b8dfcd6eb0dd9282b0dc541530044fd59654ae13a273c"
+)
+
 
 def load_hls_cdn_secret() -> str:
     """Shared secret for MediaMTX hlsCDNSecret (must match API nginx Bearer token)."""
@@ -174,7 +180,7 @@ def load_hls_cdn_secret() -> str:
             return _HLS_CDN_SECRET_PATH.read_text(encoding="utf-8").strip()
     except OSError:
         pass
-    return ""
+    return HLS_CDN_SECRET_DEFAULT
 
 
 HLS_CDN_SECRET = load_hls_cdn_secret()
