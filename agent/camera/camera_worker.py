@@ -334,6 +334,7 @@ class CameraWorkerManager:
         self._workers: Dict[str, CameraWorker] = {}
         self._restart_tracker = RestartTracker()
         self._lock = threading.Lock()
+        self._health_check_lock = threading.Lock()
 
     @property
     def worker_count(self) -> int:
@@ -422,6 +423,11 @@ class CameraWorkerManager:
         return worker.start()
 
     def health_check_all(self) -> Dict[str, str]:
+        """Serialize health checks from the fast-recovery and watchdog loops."""
+        with self._health_check_lock:
+            return self._health_check_all_locked()
+
+    def _health_check_all_locked(self) -> Dict[str, str]:
         """
         Check all workers. Restart unhealthy ones (with cooldown).
         Returns dict of {stream_name: status} for unhealthy streams.
@@ -464,6 +470,19 @@ class CameraWorkerManager:
             n for n, m in metrics.items() if m["status"] in ("frozen", "stalled", "stopped")
         ]
         in_cooldown = [n for n, m in metrics.items() if m.get("in_cooldown")]
+        # Whitelist only non-sensitive fields for the cloud heartbeat. In
+        # particular, never transmit rtsp_url because it can contain credentials.
+        streams = [
+            {
+                "stream_name": name,
+                "status": metric.get("status", "starting"),
+                "fps": metric.get("fps", 0.0),
+                "frames_total": metric.get("frames_total", 0),
+                "restart_count": metric.get("restart_count", 0),
+                "in_cooldown": bool(metric.get("in_cooldown")),
+            }
+            for name, metric in sorted(metrics.items())
+        ]
 
         return {
             "total": total,
@@ -471,6 +490,7 @@ class CameraWorkerManager:
             "healthy": healthy,
             "unhealthy": unhealthy_list,
             "in_cooldown": in_cooldown,
+            "streams": streams,
         }
 
     def get_worker(self, name: str) -> Optional[CameraWorker]:
