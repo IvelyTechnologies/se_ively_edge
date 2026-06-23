@@ -334,6 +334,7 @@ class CameraWorkerManager:
         self._workers: Dict[str, CameraWorker] = {}
         self._restart_tracker = RestartTracker()
         self._lock = threading.Lock()
+        self._health_check_lock = threading.Lock()
 
     @property
     def worker_count(self) -> int:
@@ -422,6 +423,11 @@ class CameraWorkerManager:
         return worker.start()
 
     def health_check_all(self) -> Dict[str, str]:
+        """Serialize health checks from the fast-recovery and watchdog loops."""
+        with self._health_check_lock:
+            return self._health_check_all_locked()
+
+    def _health_check_all_locked(self) -> Dict[str, str]:
         """
         Check all workers. Restart unhealthy ones (with cooldown).
         Returns dict of {stream_name: status} for unhealthy streams.
