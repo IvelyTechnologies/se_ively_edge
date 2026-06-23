@@ -102,7 +102,7 @@ async def _heartbeat(ws):
       - version, uptime
       - VPN status + IP
       - CPU, memory, disk percentages
-      - Camera health summary (total, active, unhealthy, in_cooldown)
+      - Camera health summary and credential-free per-stream status
     """
     while True:
         try:
