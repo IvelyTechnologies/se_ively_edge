@@ -76,7 +76,7 @@ def recover_streams(
 
         if is_ready:
             _not_ready_since.pop(path, None)
-            if ffprobe_check and worker and worker.is_running():
+            if ffprobe_check and worker and worker.is_running:
                 url = f"rtsp://127.0.0.1:{RTSP_PORT}/{path}"
                 if not stream_ok(url, timeout_sec=6.0):
                     if manager.restart_worker(path):
@@ -96,7 +96,7 @@ def recover_streams(
                 actions.extend(_full_reload(manager, reason=f"{path}: missing worker"))
             continue
 
-        if worker.is_running():
+        if worker.is_running:
             if manager.restart_worker(path):
                 actions.append(f"{path}: not ready → worker restarted")
             elif stuck_sec >= NOT_READY_ESCALATE_SEC:
