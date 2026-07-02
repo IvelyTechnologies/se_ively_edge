@@ -152,10 +152,18 @@ class StreamFreezeDetector:
         return self._current_fps < (self.expected_fps * self.min_fps_ratio)
 
     def is_zero_bitrate(self) -> bool:
-        """True if bitrate has been zero for longer than grace period."""
+        """True when zero bitrate agrees with a lack of recent frame progress.
+
+        FFmpeg's RTSP muxer commonly reports ``bitrate=N/A`` (kept as 0 by
+        this detector) while frames and FPS continue normally. Bitrate alone
+        must therefore never restart an otherwise healthy publisher.
+        """
         if self.uptime < self.zero_bitrate_grace_sec:
             return False
-        return self._current_bitrate <= 0 and self._total_frames > 0
+        if self._current_bitrate > 0 or self._total_frames <= 0:
+            return False
+        frame_idle_sec = time.monotonic() - self._last_frame_time
+        return frame_idle_sec > self.zero_bitrate_grace_sec
 
     def is_stalled(self) -> bool:
         """
