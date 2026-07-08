@@ -21,6 +21,13 @@ NOT_READY_ESCALATE_SEC = STREAM_NOT_READY_ESCALATE_SEC
 _last_full_reload: float = 0.0
 _full_reload_cooldown_sec = 120.0
 _not_ready_since: Dict[str, float] = {}
+_worker_startup_grace_sec = 15.0
+
+
+def _worker_is_running(worker) -> bool:
+    """Support both property-style and method-style worker APIs safely."""
+    value = getattr(worker, "is_running", False)
+    return bool(value() if callable(value) else value)
 
 
 def fetch_mediamtx_ready(timeout_sec: float = 5.0) -> Dict[str, bool]:
@@ -96,7 +103,11 @@ def recover_streams(
                 actions.extend(_full_reload(manager, reason=f"{path}: missing worker"))
             continue
 
-        if worker.is_running:
+        if _worker_is_running(worker):
+            uptime = float(getattr(worker, "uptime", _worker_startup_grace_sec) or 0.0)
+            if hasattr(worker, "uptime") and uptime < _worker_startup_grace_sec:
+                actions.append(f"{path}: not ready during startup grace ({uptime:.1f}s)")
+                continue
             if manager.restart_worker(path):
                 actions.append(f"{path}: not ready → worker restarted")
             elif stuck_sec >= NOT_READY_ESCALATE_SEC:

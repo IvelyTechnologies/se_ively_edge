@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from urllib.parse import urlsplit, urlunsplit
 
 try:
     from agent.ota.updater import update as ota_update
@@ -30,6 +31,8 @@ DIAGNOSTIC_COMMANDS: dict[str, list[str]] = {
     "mediamtx_logs":    ["journalctl", "-u", "mediamtx", "--no-pager", "-n", "50"],
     "mediamtx_ports":   ["ss", "-tlnp"],  # caller can grep for 8554/8888/9997
     "mediamtx_paths":   ["curl", "-s", "http://127.0.0.1:9997/v3/paths/list"],
+    "worker_metrics":   ["curl", "-s", "http://127.0.0.1:8080/metrics"],
+    "rtsp_source_probe": ["true"],  # handled by _run_rtsp_source_probe()
     "agent_logs":       ["journalctl", "-u", "ively-agent", "--no-pager", "-n", "50"],
     "wireguard_status": ["wg", "show"],
     "network_interfaces": ["ip", "-br", "addr"],
@@ -43,8 +46,91 @@ DIAGNOSTIC_COMMANDS: dict[str, list[str]] = {
 }
 
 
+def _mask_rtsp_url(url: str) -> str:
+    """Hide RTSP credentials while keeping host/path visible for diagnostics."""
+    try:
+        parts = urlsplit(url)
+        if "@" not in parts.netloc:
+            return url
+        host = parts.netloc.rsplit("@", 1)[-1]
+        return urlunsplit((parts.scheme, f"***:***@{host}", parts.path, parts.query, parts.fragment))
+    except Exception:
+        return url
+
+
+def _run_rtsp_source_probe(timeout: int = 15) -> dict:
+    """Probe configured source RTSP URLs from the edge LAN side."""
+    try:
+        from agent.config import CAMS_JSON_PATH
+        from agent.camera.mediamtx_writer import generate_worker_configs
+
+        with open(CAMS_JSON_PATH, "r", encoding="utf-8") as fh:
+            cams = json.load(fh)
+        configs = generate_worker_configs(cams)
+    except Exception as exc:
+        return {"command": "rtsp_source_probe", "error": f"load camera config failed: {exc}"}
+
+    probes = []
+    for cfg in configs:
+        stream_name = cfg.get("stream_name") or ""
+        for url in cfg.get("rtsp_urls") or []:
+            args = [
+                "ffprobe",
+                "-v",
+                "error",
+                "-rtsp_transport",
+                "tcp",
+                url,
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "default=nw=1",
+            ]
+            try:
+                result = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+                probes.append({
+                    "stream_name": stream_name,
+                    "url": _mask_rtsp_url(url),
+                    "ok": result.returncode == 0 and "codec_name=" in (result.stdout or ""),
+                    "stdout": (result.stdout or "")[-1000:],
+                    "stderr": (result.stderr or "")[-1000:],
+                    "returncode": result.returncode,
+                })
+            except subprocess.TimeoutExpired:
+                probes.append({
+                    "stream_name": stream_name,
+                    "url": _mask_rtsp_url(url),
+                    "ok": False,
+                    "error": f"timeout after {timeout}s",
+                })
+            except FileNotFoundError:
+                return {"command": "rtsp_source_probe", "error": "ffprobe command not found"}
+            except Exception as exc:
+                probes.append({
+                    "stream_name": stream_name,
+                    "url": _mask_rtsp_url(url),
+                    "ok": False,
+                    "error": str(exc),
+                })
+
+    return {
+        "command": "rtsp_source_probe",
+        "stdout": json.dumps({"itemCount": len(probes), "items": probes}, indent=2),
+        "stderr": "",
+        "returncode": 0 if all(item.get("ok") for item in probes) else 1,
+    }
+
+
 def _run_safe_command(name: str, timeout: int = 15) -> dict:
     """Execute a pre-approved diagnostic command and return structured output."""
+    if name == "rtsp_source_probe":
+        return _run_rtsp_source_probe(timeout=timeout)
+
     args = DIAGNOSTIC_COMMANDS.get(name)
     if args is None:
         return {"command": name, "error": f"Unknown diagnostic command: {name}"}
@@ -81,10 +167,11 @@ def run_diagnostics(commands: list[str] | None = None, timeout: int = 15) -> dic
     for cmd_name in commands:
         results[cmd_name] = _run_safe_command(cmd_name, timeout=timeout)
 
+    available_commands = sorted([*DIAGNOSTIC_COMMANDS.keys(), "rtsp_source_probe"])
     return {
         "success": True,
         "diagnostics": results,
-        "available_commands": sorted(DIAGNOSTIC_COMMANDS.keys()),
+        "available_commands": available_commands,
     }
 
 
@@ -98,15 +185,16 @@ def _handle_diagnose(cmd: dict) -> str:
     """
     requested = cmd.get("commands")
     if requested and requested == ["all"]:
-        requested = sorted(DIAGNOSTIC_COMMANDS.keys())
+        requested = sorted([*DIAGNOSTIC_COMMANDS.keys(), "rtsp_source_probe"])
     elif requested:
         # Validate requested commands
-        invalid = [c for c in requested if c not in DIAGNOSTIC_COMMANDS]
+        allowed = {*DIAGNOSTIC_COMMANDS.keys(), "rtsp_source_probe"}
+        invalid = [c for c in requested if c not in allowed]
         if invalid:
             return json.dumps({
                 "success": False,
                 "message": f"Unknown commands: {invalid}",
-                "available_commands": sorted(DIAGNOSTIC_COMMANDS.keys()),
+                "available_commands": sorted(allowed),
             })
     else:
         requested = None  # default bundle
