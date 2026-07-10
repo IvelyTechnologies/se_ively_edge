@@ -65,17 +65,22 @@ def recover_streams(
     """
     global _last_full_reload
 
-    worker_issues = manager.health_check_all()
-    actions: List[str] = [
-        f"{name}: {status}" for name, status in worker_issues.items()
-    ]
-
     paths = load_stream_paths()
     if not paths:
-        return {"actions": actions, "paths": [], "ready": {}}
+        return {"actions": [], "paths": [], "ready": {}}
 
     ready_map = fetch_mediamtx_ready()
     now = time.monotonic()
+    ready_paths = {name for name, ready in ready_map.items() if ready}
+    worker_issues = manager.health_check_all(ready_paths=ready_paths)
+    actions: List[str] = []
+    for name, status in worker_issues.items():
+        # MediaMTX ready:true means the publisher is currently delivering frames.
+        # Avoid noisy false-stall restarts from the FFmpeg progress parser.
+        if ready_map.get(name) and "stalled" in str(status):
+            actions.append(f"{name}: ignored false stall (mediamtx ready)")
+            continue
+        actions.append(f"{name}: {status}")
 
     for path in paths:
         worker = manager.get_worker(path)
@@ -83,7 +88,7 @@ def recover_streams(
 
         if is_ready:
             _not_ready_since.pop(path, None)
-            if ffprobe_check and worker and worker.is_running:
+            if ffprobe_check and worker and _worker_is_running(worker):
                 url = f"rtsp://127.0.0.1:{RTSP_PORT}/{path}"
                 if not stream_ok(url, timeout_sec=6.0):
                     if manager.restart_worker(path):

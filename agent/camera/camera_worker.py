@@ -422,16 +422,17 @@ class CameraWorkerManager:
         time.sleep(1)
         return worker.start()
 
-    def health_check_all(self) -> Dict[str, str]:
+    def health_check_all(self, ready_paths: Optional[set] = None) -> Dict[str, str]:
         """Serialize health checks from the fast-recovery and watchdog loops."""
         with self._health_check_lock:
-            return self._health_check_all_locked()
+            return self._health_check_all_locked(ready_paths=ready_paths)
 
-    def _health_check_all_locked(self) -> Dict[str, str]:
+    def _health_check_all_locked(self, ready_paths: Optional[set] = None) -> Dict[str, str]:
         """
         Check all workers. Restart unhealthy ones (with cooldown).
         Returns dict of {stream_name: status} for unhealthy streams.
         """
+        ready_paths = ready_paths or set()
         unhealthy = {}
         with self._lock:
             workers = list(self._workers.items())
@@ -446,6 +447,9 @@ class CameraWorkerManager:
             elif not worker.is_healthy():
                 # Stream frozen/stalled — restart worker
                 status = worker.get_status()
+                if name in ready_paths and status.value in ("frozen", "stalled"):
+                    unhealthy[name] = f"ignored false {status.value} (mediamtx ready)"
+                    continue
                 print(f"[manager] {name} is {status.value} — restarting worker")
                 if worker.restart():
                     unhealthy[name] = f"restarted ({status.value})"
