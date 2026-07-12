@@ -472,6 +472,10 @@ def _setup_form_html() -> str:
           <input id="cloud_url" name="cloud_url" type="text" placeholder="https://api.ivelytech.com or IP" value="209.74.93.16" required autocomplete="off">
         </div>
         <div class="field">
+          <label for="provision_key">Edge provision key <span class="optional">(required when cloud enforces SEC-03)</span></label>
+          <input id="provision_key" name="provision_key" type="password" placeholder="Matches EDGE_PROVISIONING_SECRET on cloud" autocomplete="off">
+        </div>
+        <div class="field">
           <label for="ndvr_ip">NDVR / Camera IP <span class="optional">(optional for full sweep)</span></label>
           <input id="ndvr_ip" name="ndvr_ip" type="text" placeholder="e.g. 192.168.0.104">
         </div>
@@ -898,6 +902,7 @@ async def finalize_setup(request: Request):
     customer = form.get("customer", "")
     site = form.get("site", "")
     cloud_url = form.get("cloud_url", "cloud.ively.ai")
+    provision_key = form.get("provision_key", "").strip()
     customer_id = form.get("customer_id", "")
     site_id = form.get("site_id", "")
     cams_json_str = form.get("cams_json", "[]")
@@ -946,6 +951,8 @@ async def finalize_setup(request: Request):
 
     edge_dir = "/opt/ively/edge"
     env = {**os.environ, "PYTHONPATH": edge_dir}
+    if provision_key:
+        env["IVELY_EDGE_PROVISION_KEY"] = provision_key
     subprocess.Popen(
         [
             sys.executable,

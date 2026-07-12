@@ -54,15 +54,18 @@ if site_id:
 def _register_with_cloud(host: str, payload: dict) -> dict:
     """
     POST to /register-edge. Tries https first, falls back to http.
-    On any failure (non-2xx, bad JSON, missing fields) prints exactly what
-    the server returned so the operator can diagnose from the provisioning
-    UI logs instead of seeing a bare KeyError.
+    Sends X-Edge-Provision-Key when IVELY_EDGE_PROVISION_KEY is set (SEC-03).
     """
+    provision_key = (os.environ.get("IVELY_EDGE_PROVISION_KEY") or "").strip()
+    headers = {}
+    if provision_key:
+        headers["X-Edge-Provision-Key"] = provision_key
+
     last_err: str = ""
     for scheme in ("https", "http"):
         url = f"{scheme}://{host}/register-edge"
         try:
-            r = requests.post(url, json=payload, timeout=30)
+            r = requests.post(url, json=payload, headers=headers, timeout=30)
         except requests.RequestException as exc:
             last_err = f"{scheme}: {exc}"
             print(f"  tried {url} -> network error: {exc}")
@@ -96,8 +99,9 @@ def _register_with_cloud(host: str, payload: dict) -> dict:
 
     print(f"ERROR: device registration failed on host '{host}'. Last error: {last_err}")
     print("       Check: cloud URL correctness, that /register-edge exists,")
-    print("       that customer_id/site_id (if required) are valid, and that")
-    print("       the device can reach the cloud (internet + DNS).")
+    print("       that customer_id/site_id (if required) are valid,")
+    print("       IVELY_EDGE_PROVISION_KEY matches EDGE_PROVISIONING_SECRET on cloud,")
+    print("       and that the device can reach the cloud (internet + DNS).")
     sys.exit(1)
 
 

@@ -1,7 +1,7 @@
 # websocket client — cloud connection + command dispatch + enhanced heartbeat
 #
-# Heartbeat now includes: version, VPN status, CPU, memory, disk,
-# camera health summary, uptime, and tunnel health.
+# Heartbeat includes per-stream health (EDGE-02), VPN status, system metrics,
+# and legacy camera summary for backward compatibility.
 
 import asyncio
 import json
@@ -46,20 +46,23 @@ def set_worker_manager(manager) -> None:
 
 
 def _vpn_info() -> dict:
-    """Collect VPN status for heartbeat."""
+    """Collect VPN status for heartbeat (spec field: vpn_status)."""
     if not HAS_WIREGUARD:
-        return {"vpn": "not_installed"}
+        return {"vpn": "not_installed", "vpn_status": "not_installed"}
     state = wg_load_state()
     if state is None:
-        return {"vpn": "not_configured"}
+        return {"vpn": "not_configured", "vpn_status": "not_configured"}
     try:
         status = wg_get_status()
+        connected = bool(status.get("interface_up"))
+        vpn_state = "connected" if connected else "disconnected"
         return {
-            "vpn": "connected" if status.get("interface_up") else "disconnected",
+            "vpn": vpn_state,
+            "vpn_status": vpn_state,
             "vpn_ip": status.get("vpn_ip") or state.get("vpn_ip"),
         }
     except Exception:
-        return {"vpn": "error"}
+        return {"vpn": "error", "vpn_status": "error"}
 
 
 def _system_uptime() -> float:
@@ -85,7 +88,7 @@ def _system_metrics() -> dict:
 
 
 def _camera_summary() -> dict:
-    """Collect camera worker health summary for heartbeat."""
+    """Legacy aggregate camera summary (kept for dashboards that read it)."""
     if _worker_manager is None:
         return {}
     try:
@@ -94,33 +97,44 @@ def _camera_summary() -> dict:
         return {}
 
 
-async def _heartbeat(ws):
-    """
-    Send periodic heartbeat so cloud can read device health.
+def _camera_streams() -> list[dict]:
+    """Per-stream health array required by se_backend EDGE-02."""
+    if _worker_manager is None:
+        return []
+    try:
+        return _worker_manager.get_heartbeat_streams()
+    except Exception:
+        return []
 
-    Enhanced payload includes:
-      - version, uptime
-      - VPN status + IP
-      - CPU, memory, disk percentages
-      - Camera health summary (total, active, unhealthy, in_cooldown)
-    """
+
+def build_heartbeat_payload() -> dict:
+    """Build full heartbeat JSON for cloud."""
+    heartbeat = {
+        "type": "heartbeat",
+        "version": EDGE_VERSION,
+        "uptime": round(_system_uptime(), 0),
+    }
+    heartbeat.update(_vpn_info())
+    heartbeat.update(_system_metrics())
+
+    streams = _camera_streams()
+    summary = _camera_summary()
+    cameras_payload: dict = {}
+    if summary:
+        cameras_payload.update(summary)
+    if streams:
+        cameras_payload["streams"] = streams
+    if cameras_payload:
+        heartbeat["cameras"] = cameras_payload
+    return heartbeat
+
+
+async def _heartbeat(ws):
+    """Send periodic heartbeat so cloud can read device + per-stream health."""
     while True:
         try:
             await asyncio.sleep(HEARTBEAT_INTERVAL_SEC)
-            heartbeat = {
-                "type": "heartbeat",
-                "version": EDGE_VERSION,
-                "uptime": round(_system_uptime(), 0),
-            }
-            # VPN info
-            heartbeat.update(_vpn_info())
-            # System metrics
-            heartbeat.update(_system_metrics())
-            # Camera health
-            cameras = _camera_summary()
-            if cameras:
-                heartbeat["cameras"] = cameras
-            await ws.send(json.dumps(heartbeat))
+            await ws.send(json.dumps(build_heartbeat_payload()))
         except Exception:
             break
 

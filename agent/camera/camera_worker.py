@@ -268,6 +268,12 @@ class CameraWorker:
     def get_metrics(self) -> dict:
         """Return health metrics for this camera."""
         diag = self._freeze_detector.get_diagnostics()
+        now = time.monotonic()
+        last_frame_time = diag.last_frame_time or 0.0
+        if last_frame_time > 0:
+            last_frame_age_sec = max(0.0, now - last_frame_time)
+        else:
+            last_frame_age_sec = 0.0
         return {
             "stream_name": self.stream_name,
             "status": diag.status.value,
@@ -277,6 +283,7 @@ class CameraWorker:
             "expected_fps": diag.expected_fps,
             "bitrate_kbps": round(diag.bitrate_kbps, 1),
             "frames_total": diag.frames_total,
+            "last_frame_age_sec": round(last_frame_age_sec, 1),
             "restart_count": self._restart_count,
             "in_cooldown": self._restart_tracker.is_in_cooldown(self.stream_name),
             "error_count": diag.error_count,
@@ -472,6 +479,20 @@ class CameraWorkerManager:
             "unhealthy": unhealthy_list,
             "in_cooldown": in_cooldown,
         }
+
+    def get_heartbeat_streams(self) -> list[dict]:
+        """Per-stream health for cloud WebSocket heartbeat (EDGE-02)."""
+        from agent.heartbeat_streams import build_streams_from_metrics
+
+        metrics = self.get_all_metrics()
+        mtx_ready = None
+        try:
+            from agent.camera.stream_recovery import fetch_mediamtx_ready
+
+            mtx_ready = fetch_mediamtx_ready(timeout_sec=2.0)
+        except Exception:
+            mtx_ready = None
+        return build_streams_from_metrics(metrics, mtx_ready)
 
     def get_worker(self, name: str) -> Optional[CameraWorker]:
         """Get a specific worker instance."""
