@@ -21,6 +21,13 @@ NOT_READY_ESCALATE_SEC = STREAM_NOT_READY_ESCALATE_SEC
 _last_full_reload: float = 0.0
 _full_reload_cooldown_sec = 120.0
 _not_ready_since: Dict[str, float] = {}
+_worker_startup_grace_sec = 15.0
+
+
+def _worker_is_running(worker) -> bool:
+    """Support both property-style and method-style worker APIs safely."""
+    value = getattr(worker, "is_running", False)
+    return bool(value() if callable(value) else value)
 
 
 def fetch_mediamtx_ready(timeout_sec: float = 5.0) -> Dict[str, bool]:
@@ -58,17 +65,22 @@ def recover_streams(
     """
     global _last_full_reload
 
-    worker_issues = manager.health_check_all()
-    actions: List[str] = [
-        f"{name}: {status}" for name, status in worker_issues.items()
-    ]
-
     paths = load_stream_paths()
     if not paths:
-        return {"actions": actions, "paths": [], "ready": {}}
+        return {"actions": [], "paths": [], "ready": {}}
 
     ready_map = fetch_mediamtx_ready()
     now = time.monotonic()
+    ready_paths = {name for name, ready in ready_map.items() if ready}
+    worker_issues = manager.health_check_all(ready_paths=ready_paths)
+    actions: List[str] = []
+    for name, status in worker_issues.items():
+        # MediaMTX ready:true means the publisher is currently delivering frames.
+        # Avoid noisy false-stall restarts from the FFmpeg progress parser.
+        if ready_map.get(name) and "stalled" in str(status):
+            actions.append(f"{name}: ignored false stall (mediamtx ready)")
+            continue
+        actions.append(f"{name}: {status}")
 
     for path in paths:
         worker = manager.get_worker(path)
@@ -76,7 +88,7 @@ def recover_streams(
 
         if is_ready:
             _not_ready_since.pop(path, None)
-            if ffprobe_check and worker and worker.is_running():
+            if ffprobe_check and worker and _worker_is_running(worker):
                 url = f"rtsp://127.0.0.1:{RTSP_PORT}/{path}"
                 if not stream_ok(url, timeout_sec=6.0):
                     if manager.restart_worker(path):
@@ -96,7 +108,11 @@ def recover_streams(
                 actions.extend(_full_reload(manager, reason=f"{path}: missing worker"))
             continue
 
-        if worker.is_running():
+        if _worker_is_running(worker):
+            uptime = float(getattr(worker, "uptime", _worker_startup_grace_sec) or 0.0)
+            if hasattr(worker, "uptime") and uptime < _worker_startup_grace_sec:
+                actions.append(f"{path}: not ready during startup grace ({uptime:.1f}s)")
+                continue
             if manager.restart_worker(path):
                 actions.append(f"{path}: not ready → worker restarted")
             elif stuck_sec >= NOT_READY_ESCALATE_SEC:
