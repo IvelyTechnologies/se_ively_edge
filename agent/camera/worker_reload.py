@@ -91,11 +91,9 @@ def reload_workers(manager: "CameraWorkerManager") -> Dict[str, Any]:
     with manager._lock:
         running_names = set(manager._workers.keys())
 
-    need_mtx_restart = (
-        mtx_changed
-        or running_names != planned_names
-        or planned_names != file_paths
-    )
+    paths_changed = planned_names != file_paths
+    workers_missing = running_names != planned_names
+    need_mtx_restart = mtx_changed or paths_changed
 
     if not need_mtx_restart and _all_planned_workers_running(manager, planned_names):
         names = [c["stream_name"] for c in configs]
@@ -111,12 +109,12 @@ def reload_workers(manager: "CameraWorkerManager") -> Dict[str, Any]:
         }
 
     if need_mtx_restart:
-        if not mtx_changed and running_names != planned_names:
+        if paths_changed:
             print(
                 f"[worker_reload] Path drift: workers={sorted(running_names)} "
                 f"planned={sorted(planned_names)} file={sorted(file_paths)}"
             )
-        reason = "config changed" if mtx_changed else "path name drift"
+        reason = "config changed" if mtx_changed else "path file drift"
         print(f"[worker_reload] Restarting MediaMTX ({reason})")
         subprocess.run(
             ["systemctl", "restart", "mediamtx"],
@@ -125,6 +123,11 @@ def reload_workers(manager: "CameraWorkerManager") -> Dict[str, Any]:
         )
         if not wait_for_mediamtx(timeout_sec=45):
             print("[worker_reload] WARNING: MediaMTX not ready after restart")
+    elif workers_missing:
+        print(
+            f"[worker_reload] Worker set drift only; reloading workers without MediaMTX restart "
+            f"workers={sorted(running_names)} planned={sorted(planned_names)}"
+        )
 
     started = manager.reload(configs)
     names = [c["stream_name"] for c in configs]

@@ -3,6 +3,7 @@
 set -e
 cd /opt/ively/edge
 export PYTHONPATH=/opt/ively/edge
+export IVELY_RTSP_STREAM_PROFILE="${IVELY_RTSP_STREAM_PROFILE:-sub}"
 export IVELY_SUBSTREAM_ONLY="${IVELY_SUBSTREAM_ONLY:-1}"
 export IVELY_RTSP_PROBE_URLS="${IVELY_RTSP_PROBE_URLS:-1}"
 

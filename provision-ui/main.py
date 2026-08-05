@@ -982,7 +982,8 @@ def rediscover():
         edge_agent_env = lambda extra=None: {  # noqa: E731
             **os.environ,
             "PYTHONPATH": edge_dir,
-            "IVELY_SUBSTREAM_ONLY": "1",
+            "IVELY_RTSP_STREAM_PROFILE": os.environ.get("IVELY_RTSP_STREAM_PROFILE", "sub"),
+            "IVELY_SUBSTREAM_ONLY": os.environ.get("IVELY_SUBSTREAM_ONLY", "1"),
             "IVELY_RTSP_PROBE_URLS": "1",
             **(extra or {}),
         }

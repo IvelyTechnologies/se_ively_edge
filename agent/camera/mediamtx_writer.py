@@ -208,14 +208,24 @@ def _rtsp_format_url(fmt: str, params: dict) -> str:
         )
 
 
-def _use_substream_only(manufacturer: str) -> bool:
+def _selected_rtsp_stream_profile(manufacturer: str) -> str:
     """
-    Prefer substream RTSP only (no main-stream fallback).
-    Default: on (IVELY_SUBSTREAM_ONLY=1). Set IVELY_SUBSTREAM_ONLY=0 to also try main stream.
+    Select exactly one RTSP input profile.
+
+    IVELY_RTSP_STREAM_PROFILE=sub  -> substream only
+    IVELY_RTSP_STREAM_PROFILE=main -> main stream only
+
+    Legacy IVELY_SUBSTREAM_ONLY is kept only for older deployments.
     """
     _ = manufacturer  # reserved for future per-brand overrides
-    v = (os.environ.get("IVELY_SUBSTREAM_ONLY") or "1").strip().lower()
-    return v not in ("0", "false", "no")
+    profile = (os.environ.get("IVELY_RTSP_STREAM_PROFILE") or "").strip().lower()
+    if profile in ("main", "primary", "hd", "high", "0"):
+        return "main"
+    if profile in ("sub", "secondary", "low", "1"):
+        return "sub"
+
+    legacy = (os.environ.get("IVELY_SUBSTREAM_ONLY") or "1").strip().lower()
+    return "sub" if legacy not in ("0", "false", "no") else "main"
 
 
 def _use_rtsp_probe() -> bool:
@@ -278,8 +288,8 @@ def _rtsp_low_url_candidates(
     probe: Optional[bool] = None,
 ) -> list[str]:
     """
-    Return ordered RTSP URLs to try for the low/sub stream.
-    Sub-stream first; main stream only when substream-only mode is off.
+    Return the selected RTSP URL for the configured input stream.
+    No automatic sub/main fallback is used; the configured profile is authoritative.
     Optionally ffprobe-filter to working URLs (H.265/H.264, no NVR reconfiguration).
     """
     if manufacturer_override and manufacturer_override in RTSP_FORMATS:
@@ -297,10 +307,8 @@ def _rtsp_low_url_candidates(
         "channel": channel,
         "profile": "2",
     }
-    if _use_substream_only(manufacturer):
-        fmts = (sub_fmt,)
-    else:
-        fmts = (sub_fmt, main_fmt)
+    selected_profile = _selected_rtsp_stream_profile(manufacturer)
+    fmts = (main_fmt,) if selected_profile == "main" else (sub_fmt,)
     urls: list[str] = []
     for fmt in fmts:
         url = _rtsp_format_url(fmt, params)

@@ -1,4 +1,4 @@
-# stream_recovery — keep paths ready:true; recover worker / MediaMTX / full reload
+# stream_recovery - keep paths ready:true; recover worker / MediaMTX / full reload
 
 import json
 import time
@@ -113,13 +113,15 @@ def recover_streams(
             if hasattr(worker, "uptime") and uptime < _worker_startup_grace_sec:
                 actions.append(f"{path}: not ready during startup grace ({uptime:.1f}s)")
                 continue
+            if stuck_sec < NOT_READY_ESCALATE_SEC:
+                actions.append(f"{path}: not ready for {stuck_sec:.1f}s; waiting before restart")
+                continue
             if manager.restart_worker(path):
-                actions.append(f"{path}: not ready → worker restarted")
-            elif stuck_sec >= NOT_READY_ESCALATE_SEC:
-                if manager.force_restart_worker(path):
-                    actions.append(f"{path}: not ready → force restart (cleared cooldown)")
-                elif (now - _last_full_reload) >= _full_reload_cooldown_sec:
-                    actions.extend(_full_reload(manager, reason=f"{path}: not ready + cooldown"))
+                actions.append(f"{path}: not ready for {stuck_sec:.1f}s → worker restarted")
+            elif manager.force_restart_worker(path):
+                actions.append(f"{path}: not ready → force restart (cleared cooldown)")
+            elif (now - _last_full_reload) >= _full_reload_cooldown_sec:
+                actions.extend(_full_reload(manager, reason=f"{path}: not ready + cooldown"))
         else:
             if manager.restart_worker(path):
                 actions.append(f"{path}: not ready + stopped → worker restarted")
