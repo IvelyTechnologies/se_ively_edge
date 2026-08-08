@@ -9,6 +9,7 @@ from typing import List, Optional
 from agent.config import (
     EDGE_DIR,
     IVELY_RTSP_PROBE_URLS_DEFAULT,
+    IVELY_RTSP_STREAM_PROFILE_DEFAULT,
     IVELY_SUBSTREAM_ONLY_DEFAULT,
     RTSP_PORT,
 )
@@ -19,6 +20,7 @@ def edge_agent_env(extra: Optional[dict] = None) -> dict:
     env = {
         **os.environ,
         "PYTHONPATH": str(EDGE_DIR),
+        "IVELY_RTSP_STREAM_PROFILE": IVELY_RTSP_STREAM_PROFILE_DEFAULT,
         "IVELY_SUBSTREAM_ONLY": IVELY_SUBSTREAM_ONLY_DEFAULT,
         "IVELY_RTSP_PROBE_URLS": IVELY_RTSP_PROBE_URLS_DEFAULT,
     }

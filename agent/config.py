@@ -109,12 +109,14 @@ WORKER_HEALTH_CHECK_SEC = 15  # how often workers check their FFmpeg process
 STREAM_RECOVERY_INTERVAL_SEC = int(os.environ.get("IVELY_STREAM_RECOVERY_INTERVAL", "20"))
 STREAM_NOT_READY_ESCALATE_SEC = int(os.environ.get("IVELY_STREAM_NOT_READY_ESCALATE", "90"))
 
-# Substream-only RTSP (no main-stream fallback). Default IVELY_SUBSTREAM_ONLY=1.
-# Set IVELY_SUBSTREAM_ONLY=0 to also try main stream (e.g. subtype=0 on Dahua).
+# RTSP input stream profile. Default: substream.
+# Set IVELY_RTSP_STREAM_PROFILE=main to use main stream (e.g. subtype=0 on Dahua).
+# Legacy IVELY_SUBSTREAM_ONLY is still accepted for older installs.
 # Probe RTSP URLs with ffprobe before starting workers; keep URLs that decode. Default on.
 # Set IVELY_RTSP_PROBE_URLS=0 to skip probing.
 
 # Defaults applied to agent subprocesses (discover, provision) and systemd template.
+IVELY_RTSP_STREAM_PROFILE_DEFAULT = os.environ.get("IVELY_RTSP_STREAM_PROFILE", "sub")
 IVELY_SUBSTREAM_ONLY_DEFAULT = os.environ.get("IVELY_SUBSTREAM_ONLY", "1")
 IVELY_RTSP_PROBE_URLS_DEFAULT = os.environ.get("IVELY_RTSP_PROBE_URLS", "1")
 
@@ -148,7 +150,7 @@ LOCAL_BUFFER_MAX_DISK_PERCENT = float(os.environ.get("IVELY_BUFFER_MAX_DISK", "8
 
 # ---------------------------------------------------------------------------
 # HLS (MediaMTX + browser player) — smooth live with ~3–5s end-user latency
-# Override: IVELY_HLS_SEGMENT_DURATION=1s, IVELY_HLS_SEGMENT_COUNT=10
+# Override: IVELY_HLS_SEGMENT_DURATION=1s, IVELY_HLS_SEGMENT_COUNT=30
 # Keep mpegts (stable); fMP4/lowLatency caused MOOV errors on some clients.
 #
 # Mobile HLS via api.ivelytech.com /edge-stream/ requires hlsCDNSecret on the
@@ -157,7 +159,7 @@ LOCAL_BUFFER_MAX_DISK_PERCENT = float(os.environ.get("IVELY_BUFFER_MAX_DISK", "8
 # mediamtx.yml (rediscover cameras or restart agent pipeline).
 # ---------------------------------------------------------------------------
 HLS_SEGMENT_DURATION = os.environ.get("IVELY_HLS_SEGMENT_DURATION", "1s")
-HLS_SEGMENT_COUNT = int(os.environ.get("IVELY_HLS_SEGMENT_COUNT", "10"))
+HLS_SEGMENT_COUNT = int(os.environ.get("IVELY_HLS_SEGMENT_COUNT", "30"))
 HLS_VARIANT = os.environ.get("IVELY_HLS_VARIANT", "mpegts")
 HLS_MUXER_CLOSE_AFTER = os.environ.get("IVELY_HLS_MUXER_CLOSE_AFTER", "300s")
 

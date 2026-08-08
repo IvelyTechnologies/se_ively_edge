@@ -1,4 +1,4 @@
-# self-healing watchdog — per-camera worker health, service health, disk, internet, VPN, re-discovery
+# self-healing watchdog - per-camera worker health, service health, disk, internet, VPN, re-discovery
 #
 # Enterprise-grade watchdog that:
 #   - Restarts ONLY failed camera workers (never all of MediaMTX)
@@ -20,7 +20,7 @@ try:
 except ImportError:
     psutil = None  # type: ignore
     HAS_PSUTIL = False
-    print("[watchdog] psutil not installed — CPU metrics disabled", file=sys.stderr)
+    print("[watchdog] psutil not installed - CPU metrics disabled", file=sys.stderr)
 
 try:
     from dotenv import load_dotenv
@@ -36,6 +36,10 @@ from agent.config import (
 )
 
 _CLOUD_URL = (os.getenv("CLOUD_URL") or "cloud.ively.ai").strip().replace("https://", "").replace("http://", "").strip("/")
+_WG_RESTART_COOLDOWN_SEC = int(os.getenv("IVELY_WG_RESTART_COOLDOWN_SEC", "300"))
+_WG_STALE_RESTART_AFTER = int(os.getenv("IVELY_WG_STALE_RESTART_AFTER", "3"))
+_last_wg_restart_at = 0.0
+_wg_stale_count = 0
 
 # Camera worker manager (injected from main.py)
 _worker_manager = None
@@ -99,9 +103,25 @@ def restart_service(name: str) -> None:
     print(f"[watchdog] Restarting service: {name}")
     subprocess.run(["systemctl", "restart", name], timeout=15, check=False)
 
+def _restart_wireguard(reason: str) -> None:
+    """Restart WireGuard with cooldown to avoid tunnel flapping storms."""
+    global _last_wg_restart_at
+    now = time.monotonic()
+    elapsed = now - _last_wg_restart_at
+    if _last_wg_restart_at and elapsed < _WG_RESTART_COOLDOWN_SEC:
+        remaining = _WG_RESTART_COOLDOWN_SEC - elapsed
+        print(
+            f"[watchdog] WireGuard unhealthy ({reason}) but restart cooldown active "
+            f"({remaining:.0f}s remaining)"
+        )
+        return
+    print(f"[watchdog] WireGuard unhealthy ({reason}) - restarting")
+    wg_restart_tunnel()
+    _last_wg_restart_at = time.monotonic()
 
 def _check_wireguard() -> None:
     """Monitor WireGuard tunnel health and restart if unhealthy."""
+    global _wg_stale_count
     if not HAS_WIREGUARD:
         return
 
@@ -111,17 +131,25 @@ def _check_wireguard() -> None:
         return
 
     if not wg_is_up():
-        print("[watchdog] WireGuard interface down — restarting tunnel")
-        wg_restart_tunnel()
+        _wg_stale_count = 0
+        _restart_wireguard("interface down")
         return
 
     if not wg_tunnel_healthy(max_handshake_age_sec=120):
-        print("[watchdog] WireGuard tunnel unhealthy (stale handshake) — restarting")
-        wg_restart_tunnel()
+        _wg_stale_count += 1
+        print(
+            f"[watchdog] WireGuard stale handshake "
+            f"({_wg_stale_count}/{_WG_STALE_RESTART_AFTER})"
+        )
+        if _wg_stale_count >= _WG_STALE_RESTART_AFTER:
+            _restart_wireguard("stale handshake")
+            _wg_stale_count = 0
+        return
 
+    _wg_stale_count = 0
 
 def _check_camera_workers() -> None:
-    """Legacy hook — recovery is handled by stream_recovery.recover_streams."""
+    """Legacy hook - recovery is handled by stream_recovery.recover_streams."""
     if _worker_manager is None:
         return
     try:
@@ -152,7 +180,7 @@ def watchdog_loop(
 
     while True:
         try:
-            # 1) Service health — MediaMTX process
+            # 1) Service health - MediaMTX process
             #    Only restart MediaMTX if the process itself is dead.
             #    Camera stream issues are handled by per-camera workers.
             if not check_service("mediamtx"):
@@ -169,7 +197,7 @@ def watchdog_loop(
             if not check_service("ively-agent"):
                 restart_service("ively-agent")
 
-            # 2) Per-camera recovery — workers + MediaMTX ready + escalation
+            # 2) Per-camera recovery - workers + MediaMTX ready + escalation
             if _worker_manager is not None:
                 try:
                     from agent.camera.stream_recovery import recover_streams
@@ -181,7 +209,7 @@ def watchdog_loop(
                 except Exception as e:
                     print(f"[watchdog] Stream recovery error: {e}")
 
-            # 3) CPU monitoring — log warning, do NOT restart MediaMTX
+            # 3) CPU monitoring - log warning, do NOT restart MediaMTX
             if HAS_PSUTIL:
                 try:
                     cpu = psutil.cpu_percent(interval=1)
@@ -197,15 +225,14 @@ def watchdog_loop(
             if disk_cleanup is not None:
                 disk_cleanup(threshold_percent=disk_threshold)
 
-            # 5) Internet recovery — when back online, force agent reconnect
+            # 5) Internet recovery - when back online, force agent reconnect
             internet_ok = _internet_ok()
             if not last_internet_ok and internet_ok:
-                print("[watchdog] Internet back — restarting ively-agent")
+                print("[watchdog] Internet back - restarting ively-agent")
                 restart_service("ively-agent")
                 # Also restart WireGuard tunnel after internet recovery
                 if HAS_WIREGUARD and wg_load_state() is not None:
-                    print("[watchdog] Internet back — restarting WireGuard tunnel")
-                    wg_restart_tunnel()
+                    _restart_wireguard("internet recovered")
             last_internet_ok = internet_ok
 
             # 6) WireGuard tunnel health
