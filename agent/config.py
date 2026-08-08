@@ -187,6 +187,17 @@ def load_hls_cdn_secret() -> str:
 
 HLS_CDN_SECRET = load_hls_cdn_secret()
 
+# ---------------------------------------------------------------------------
+# WebRTC ICE — public hosts advertised for browser clients via /edge-webrtc/
+# ---------------------------------------------------------------------------
+# Hostnames/IPs MediaMTX puts in ICE candidates so browsers can reach media
+# through the cloud nginx proxy (not the edge VPN IP alone).
+# Comma-separated. Example: api.ivelytech.com,spectraanet.ivelytech.com
+WEBRTC_ADDITIONAL_HOSTS = os.environ.get(
+    "IVELY_WEBRTC_ADDITIONAL_HOSTS",
+    "api.ivelytech.com",
+)
+
 # hls.js tuning for live MPEG-TS (passed to /view player)
 HLS_JS_PLAYER_CONFIG = {
     "enableWorker": True,

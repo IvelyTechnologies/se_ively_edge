@@ -15,6 +15,27 @@ from agent.config import (
     stream_path_name,
 )
 
+# Public hosts advertised in WebRTC ICE (browser clients via api nginx proxy).
+# Override with env IVELY_WEBRTC_ADDITIONAL_HOSTS=host1,host2
+_DEFAULT_WEBRTC_ADDITIONAL_HOSTS = "api.ivelytech.com"
+
+
+def _webrtc_additional_hosts_yaml() -> str:
+    """YAML list block for webrtcAdditionalHosts (indented under the key)."""
+    raw = (
+        os.environ.get("IVELY_WEBRTC_ADDITIONAL_HOSTS")
+        or _DEFAULT_WEBRTC_ADDITIONAL_HOSTS
+    ).strip()
+    hosts = []
+    for part in raw.split(","):
+        h = part.strip().strip('"').strip("'")
+        if h and h not in hosts:
+            hosts.append(h)
+    if not hosts:
+        hosts = [_DEFAULT_WEBRTC_ADDITIONAL_HOSTS]
+    return "\n".join(f'  - "{h}"' for h in hosts)
+
+
 # Model substring -> manufacturer key (first match wins; check more specific first)
 MODEL_TO_MANUFACTURER = [
     ("hikvision", "hikvision"),
@@ -727,6 +748,7 @@ def generate(
     prefix = _path_prefix()
     ensure_site_path_prefix(prefix)
     hls_block = _mediamtx_hls_yaml()
+    webrtc_additional_hosts = _webrtc_additional_hosts_yaml()
 
     cfg = f"""# --- Ively SmartEye Edge — MediaMTX Configuration ---
 # Auto-generated — do not edit manually.
@@ -738,12 +760,16 @@ rtsp: yes
 rtspAddress: :8554
 
 {hls_block}
-# WebRTC — enabled for low-latency browser viewing
+# WebRTC — enabled for low-latency browser viewing via cloud /edge-webrtc/
+# (WHEP). webrtcAdditionalHosts must include the public API hostname so ICE
+# candidates are reachable from desktop Wi-Fi (not only the WireGuard IP).
 webrtc: yes
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: :8189
 webrtcIPsFromInterfaces: yes
+webrtcAdditionalHosts:
+{webrtc_additional_hosts}
 webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
 
