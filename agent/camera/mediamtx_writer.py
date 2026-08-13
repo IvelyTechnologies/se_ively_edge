@@ -719,6 +719,38 @@ def _write_if_changed_atomic(config_path: str, content: str) -> bool:
     return True
 
 
+_ANALOG_DVR_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*_analog_dvr_ch[1-9][0-9]*_low$")
+
+
+def _load_analog_dvr_publisher_paths(config_path: str) -> list[str]:
+    """Keep Analog DVR publisher paths when this writer regenerates MediaMTX."""
+    try:
+        with open(config_path, encoding="utf-8") as file:
+            lines = file.readlines()
+    except FileNotFoundError:
+        return []
+
+    paths_start = next(
+        (index for index, line in enumerate(lines) if re.fullmatch(r"paths:\s*(?:#.*)?\n?", line)),
+        None,
+    )
+    if paths_start is None:
+        return []
+
+    paths: list[str] = []
+    for line in lines[paths_start + 1:]:
+        if line.strip() and not line.startswith((" ", "\t", "#")):
+            break
+        if not line.startswith((" ", "\t")):
+            continue
+        candidate = line.strip()
+        if candidate.endswith(":"):
+            name = candidate[:-1].strip()
+            if _ANALOG_DVR_PATH.fullmatch(name) and name not in paths:
+                paths.append(name)
+    return paths
+
+
 def generate(
     cams,
     config_path: str = "/opt/ively/mediamtx/mediamtx.yml",
@@ -744,6 +776,11 @@ def generate(
         password = ""
     if manufacturer_override is None:
         manufacturer_override = _load_manufacturer_override()
+
+    # Analog DVR publishers use this same MediaMTX server but are managed by
+    # analog-dvr-edge. Keep their registered publisher paths across an NVR
+    # config regeneration or a future Edge deployment.
+    analog_paths = _load_analog_dvr_publisher_paths(config_path)
 
     prefix = _path_prefix()
     ensure_site_path_prefix(prefix)
@@ -805,6 +842,11 @@ paths:
     source: publisher
 """
             camera_index += 1
+    for path_name in analog_paths:
+        cfg += f"""
+  {path_name}:
+    source: publisher
+"""
     changed = _write_if_changed_atomic(config_path, cfg)
     if changed:
         print("MediaMTX config updated:", config_path)
