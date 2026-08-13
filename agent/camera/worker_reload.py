@@ -87,7 +87,9 @@ def reload_workers(manager: "CameraWorkerManager") -> Dict[str, Any]:
     mtx_changed = apply_camera_config(cams)
     configs = build_worker_configs(cams)
     planned_names = {c["stream_name"] for c in configs}
-    file_paths = set(load_stream_paths())
+    # Ignore publisher paths owned by optional local services such as
+    # analog-dvr-edge. They are deliberately not CameraWorkerManager workers.
+    file_paths = set(load_stream_paths(include_external=False))
     with manager._lock:
         running_names = set(manager._workers.keys())
 

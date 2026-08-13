@@ -11,8 +11,18 @@ import yaml
 
 from agent.config import MEDIAMTX_CONFIG
 
+_EXTERNAL_PUBLISHER_MARKERS = ("_analog_dvr_ch",)
 
-def load_stream_paths(config_path: str = str(MEDIAMTX_CONFIG)) -> List[str]:
+
+def is_external_publisher_path(path: str) -> bool:
+    """True for MediaMTX paths managed by another local edge service."""
+    normalized = str(path).strip().lower()
+    return any(marker in normalized for marker in _EXTERNAL_PUBLISHER_MARKERS)
+
+
+def load_stream_paths(
+    config_path: str = str(MEDIAMTX_CONFIG), *, include_external: bool = True
+) -> List[str]:
     """
     Read stream path names from mediamtx.yml using proper YAML parsing.
     Returns a list like ['customer_site_cam1_low', 'customer_site_cam2_low'].
@@ -26,7 +36,10 @@ def load_stream_paths(config_path: str = str(MEDIAMTX_CONFIG)) -> List[str]:
         paths_section = data.get("paths")
         if not isinstance(paths_section, dict):
             return []
-        return [k for k in paths_section if k.lower() not in _NON_STREAM]
+        paths = [k for k in paths_section if k.lower() not in _NON_STREAM]
+        if include_external:
+            return paths
+        return [path for path in paths if not is_external_publisher_path(path)]
     except Exception:
         return []
 
