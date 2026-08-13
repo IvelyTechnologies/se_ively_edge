@@ -173,6 +173,7 @@ class CameraWorker:
             # Start stderr reader thread for freeze detection
             self._reader_thread = threading.Thread(
                 target=self._read_stderr,
+                args=(self._process,),
                 name=f"worker-stderr-{self.stream_name}",
                 daemon=True,
             )
@@ -297,15 +298,16 @@ class CameraWorker:
             ),
         }
 
-    def _read_stderr(self) -> None:
+    def _read_stderr(self, proc: subprocess.Popen) -> None:
         """Background thread: read FFmpeg stderr for freeze detection."""
-        proc = self._process
-        if proc is None or proc.stderr is None:
+        if proc.stderr is None:
             return
 
         try:
             for raw_line in proc.stderr:
-                if not self._running:
+                # A restarted worker owns a different FFmpeg process. Its old
+                # reader must not update health or stop state for the new one.
+                if not self._running or self._process is not proc:
                     break
                 try:
                     line = raw_line.decode("utf-8", errors="replace").rstrip()
@@ -316,14 +318,17 @@ class CameraWorker:
             pass
         finally:
             # Process ended — mark as not running
-            if self._start_time > 0:
-                self._last_run_uptime = time.monotonic() - self._start_time
-            if self._running:
-                print(
-                    f"[worker:{self.stream_name}] FFmpeg process exited "
-                    f"(ran {self._last_run_uptime:.1f}s)"
-                )
-                self._running = False
+            with self._lock:
+                if self._process is not proc:
+                    return
+                if self._start_time > 0:
+                    self._last_run_uptime = time.monotonic() - self._start_time
+                if self._running:
+                    print(
+                        f"[worker:{self.stream_name}] FFmpeg process exited "
+                        f"(ran {self._last_run_uptime:.1f}s)"
+                    )
+                    self._running = False
 
 
 class CameraWorkerManager:
