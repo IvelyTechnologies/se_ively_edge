@@ -45,7 +45,7 @@ class _RecoveryManager:
         self.worker = _Worker()
         self.restart_calls = 0
 
-    def health_check_all(self):
+    def health_check_all(self, ready_paths=None):
         return {}
 
     def get_worker(self, name):
@@ -62,8 +62,32 @@ class RecoveryTests(unittest.TestCase):
     def test_is_running_property_is_not_called(self, _paths, _ready):
         manager = _RecoveryManager()
         result = recover_streams(manager)
-        self.assertEqual(1, manager.restart_calls)
-        self.assertIn("cam1: not ready → worker restarted", result["actions"])
+        self.assertEqual(0, manager.restart_calls)
+        self.assertTrue(any("not ready" in action for action in result["actions"]))
+
+
+class RecoverySerializationTests(unittest.TestCase):
+    def test_recovery_calls_are_serialized(self):
+        started = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def slow_recovery(*_args, **_kwargs):
+            calls.append(True)
+            started.set()
+            release.wait(timeout=1)
+            return {"actions": ["completed"], "paths": ["cam1"], "ready": {}}
+
+        with patch("agent.camera.stream_recovery._recover_streams", side_effect=slow_recovery):
+            first = threading.Thread(target=lambda: recover_streams(_RecoveryManager()))
+            first.start()
+            self.assertTrue(started.wait(timeout=1))
+            second = recover_streams(_RecoveryManager())
+            release.set()
+            first.join(timeout=1)
+
+        self.assertEqual(["recovery already in progress"], second["actions"])
+        self.assertEqual(1, len(calls))
 
 
 class HealthCheckSerializationTests(unittest.TestCase):
@@ -73,7 +97,7 @@ class HealthCheckSerializationTests(unittest.TestCase):
         max_active = 0
         state_lock = threading.Lock()
 
-        def locked_check():
+        def locked_check(ready_paths=None):
             nonlocal active, max_active
             with state_lock:
                 active += 1
