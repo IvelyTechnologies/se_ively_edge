@@ -3,7 +3,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from agent.camera.camera_worker import CameraWorkerManager
+from agent.camera.camera_worker import CameraWorker, CameraWorkerManager
 from agent.camera.freeze_detector import StreamFreezeDetector, StreamStatus
 from agent.camera.stream_recovery import recover_streams
 
@@ -88,6 +88,23 @@ class RecoverySerializationTests(unittest.TestCase):
 
         self.assertEqual(["recovery already in progress"], second["actions"])
         self.assertEqual(1, len(calls))
+
+
+class WorkerReaderOwnershipTests(unittest.TestCase):
+    def test_old_reader_cannot_stop_restarted_worker(self):
+        class Process:
+            stderr = []
+
+        worker = CameraWorker("cam1", "ffmpeg")
+        old_process = Process()
+        new_process = Process()
+        worker._process = new_process
+        worker._running = True
+
+        worker._read_stderr(old_process)
+
+        self.assertTrue(worker._running)
+        self.assertIs(worker._process, new_process)
 
 
 class HealthCheckSerializationTests(unittest.TestCase):
