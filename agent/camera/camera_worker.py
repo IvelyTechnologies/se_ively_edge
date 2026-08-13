@@ -444,6 +444,9 @@ class CameraWorkerManager:
         Check all workers. Restart unhealthy ones (with cooldown).
         Returns dict of {stream_name: status} for unhealthy streams.
         """
+        # Path recovery owns retries when MediaMTX reports a publisher as not
+        # ready. Health checks must not restart that same worker every cycle.
+        has_readiness_snapshot = ready_paths is not None
         ready_paths = ready_paths or set()
         unhealthy = {}
         with self._lock:
@@ -459,6 +462,9 @@ class CameraWorkerManager:
             elif not worker.is_healthy():
                 # Stream frozen/stalled — restart worker
                 status = worker.get_status()
+                if has_readiness_snapshot and name not in ready_paths:
+                    unhealthy[name] = f"not ready ({status.value}); recovery deferred"
+                    continue
                 if name in ready_paths and status.value in ("frozen", "stalled"):
                     unhealthy[name] = f"ignored false {status.value} (mediamtx ready)"
                     continue
