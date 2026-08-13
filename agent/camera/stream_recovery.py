@@ -138,16 +138,20 @@ def _recover_streams(
                 actions.append(f"{path}: not ready for {stuck_sec:.1f}s; waiting before restart")
                 continue
             if manager.restart_worker(path):
+                _not_ready_since[path] = time.monotonic()
                 actions.append(f"{path}: not ready for {stuck_sec:.1f}s → worker restarted")
             elif manager.force_restart_worker(path):
+                _not_ready_since[path] = time.monotonic()
                 actions.append(f"{path}: not ready → force restart (cleared cooldown)")
             elif (now - _last_full_reload) >= _full_reload_cooldown_sec:
                 actions.extend(_full_reload(manager, reason=f"{path}: not ready + cooldown"))
         else:
             if manager.restart_worker(path):
+                _not_ready_since[path] = time.monotonic()
                 actions.append(f"{path}: not ready + stopped → worker restarted")
             elif stuck_sec >= NOT_READY_ESCALATE_SEC:
                 if manager.force_restart_worker(path):
+                    _not_ready_since[path] = time.monotonic()
                     actions.append(f"{path}: stopped → force restart")
                 elif (now - _last_full_reload) >= _full_reload_cooldown_sec:
                     actions.extend(_full_reload(manager, reason=f"{path}: stopped + cooldown"))

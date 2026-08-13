@@ -56,6 +56,23 @@ class _RecoveryManager:
         return True
 
 
+class _FrozenWorker:
+    is_running = True
+
+    def __init__(self):
+        self.restart_calls = 0
+
+    def is_healthy(self):
+        return False
+
+    def get_status(self):
+        return StreamStatus.FROZEN
+
+    def restart(self):
+        self.restart_calls += 1
+        return True
+
+
 class RecoveryTests(unittest.TestCase):
     @patch("agent.camera.stream_recovery.fetch_mediamtx_ready", return_value={"cam1": False})
     @patch("agent.camera.stream_recovery.load_stream_paths", return_value=["cam1"])
@@ -108,6 +125,16 @@ class WorkerReaderOwnershipTests(unittest.TestCase):
 
 
 class HealthCheckSerializationTests(unittest.TestCase):
+    def test_unready_path_is_left_to_recovery_loop(self):
+        manager = CameraWorkerManager()
+        worker = _FrozenWorker()
+        manager._workers["cam1"] = worker
+
+        result = manager.health_check_all(ready_paths=set())
+
+        self.assertEqual(0, worker.restart_calls)
+        self.assertEqual("not ready (frozen); recovery deferred", result["cam1"])
+
     def test_health_checks_do_not_overlap(self):
         manager = CameraWorkerManager()
         active = 0
