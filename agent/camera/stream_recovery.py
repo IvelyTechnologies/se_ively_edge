@@ -1,6 +1,7 @@
 # stream_recovery - keep paths ready:true; recover worker / MediaMTX / full reload
 
 import json
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -22,6 +23,10 @@ _last_full_reload: float = 0.0
 _full_reload_cooldown_sec = 120.0
 _not_ready_since: Dict[str, float] = {}
 _worker_startup_grace_sec = 15.0
+# Both the main recovery loop and watchdog call recover_streams().  Serializing
+# this prevents a second loop from mistaking workers being restarted by the
+# first loop as "missing" and initiating another full MediaMTX reload.
+_recovery_lock = threading.Lock()
 
 
 def _worker_is_running(worker) -> bool:
@@ -50,6 +55,19 @@ def fetch_mediamtx_ready(timeout_sec: float = 5.0) -> Dict[str, bool]:
 
 
 def recover_streams(
+    manager: "CameraWorkerManager",
+    *,
+    ffprobe_check: bool = False,
+) -> dict:
+    if not _recovery_lock.acquire(blocking=False):
+        return {"actions": ["recovery already in progress"], "paths": [], "ready": {}}
+    try:
+        return _recover_streams(manager, ffprobe_check=ffprobe_check)
+    finally:
+        _recovery_lock.release()
+
+
+def _recover_streams(
     manager: "CameraWorkerManager",
     *,
     ffprobe_check: bool = False,
