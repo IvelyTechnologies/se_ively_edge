@@ -65,7 +65,10 @@ def recover_streams(
     """
     global _last_full_reload
 
-    paths = load_stream_paths()
+    # Analog DVR paths share MediaMTX but their FFmpeg lifecycle belongs to
+    # analog-dvr-edge. Never restart the NVR pipeline because an external
+    # publisher path is not ready.
+    paths = load_stream_paths(include_external=False)
     if not paths:
         return {"actions": [], "paths": [], "ready": {}}
 
