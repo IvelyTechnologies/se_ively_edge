@@ -424,6 +424,15 @@ def _use_ultra_low_profile() -> bool:
     return v in ("1", "true", "yes")
 
 
+def _ffmpeg_reorder_queue_size() -> str:
+    """Return a bounded RTSP packet reorder queue suitable for live playback."""
+    raw = (os.environ.get("IVELY_FFMPEG_REORDER_QUEUE_SIZE") or "64").strip()
+    try:
+        return str(min(256, max(0, int(raw))))
+    except ValueError:
+        return "64"
+
+
 def _ffmpeg_input_flags() -> list[str]:
     """
     Build robust FFmpeg input flags for unstable RTSP/HEVC camera links.
@@ -453,9 +462,10 @@ def _ffmpeg_input_flags() -> list[str]:
         "5000000",
         "-probesize",
         "5000000",
-        # Keep larger reordering tolerance for jittery links.
+        # 1024 packets can turn minor jitter into tens of seconds of live delay.
+        # Keep enough tolerance for unstable cameras without building a large backlog.
         "-reorder_queue_size",
-        "1024",
+        _ffmpeg_reorder_queue_size(),
         # Limit demuxer waiting to avoid long stalls.
         "-max_delay",
         "500000",

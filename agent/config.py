@@ -150,7 +150,7 @@ LOCAL_BUFFER_MAX_DISK_PERCENT = float(os.environ.get("IVELY_BUFFER_MAX_DISK", "8
 
 # ---------------------------------------------------------------------------
 # HLS (MediaMTX + browser player) — smooth live with ~3–5s end-user latency
-# Override: IVELY_HLS_SEGMENT_DURATION=1s, IVELY_HLS_SEGMENT_COUNT=30
+# Override: IVELY_HLS_SEGMENT_DURATION=2s, IVELY_HLS_SEGMENT_COUNT=15
 # Keep mpegts (stable); fMP4/lowLatency caused MOOV errors on some clients.
 #
 # Mobile HLS via api.ivelytech.com /edge-stream/ requires hlsCDNSecret on the
@@ -158,8 +158,8 @@ LOCAL_BUFFER_MAX_DISK_PERCENT = float(os.environ.get("IVELY_BUFFER_MAX_DISK", "8
 # Set IVELY_HLS_CDN_SECRET or /opt/ively/agent/hls_cdn_secret, then regenerate
 # mediamtx.yml (rediscover cameras or restart agent pipeline).
 # ---------------------------------------------------------------------------
-HLS_SEGMENT_DURATION = os.environ.get("IVELY_HLS_SEGMENT_DURATION", "1s")
-HLS_SEGMENT_COUNT = int(os.environ.get("IVELY_HLS_SEGMENT_COUNT", "30"))
+HLS_SEGMENT_DURATION = os.environ.get("IVELY_HLS_SEGMENT_DURATION", "2s")
+HLS_SEGMENT_COUNT = int(os.environ.get("IVELY_HLS_SEGMENT_COUNT", "15"))
 HLS_VARIANT = os.environ.get("IVELY_HLS_VARIANT", "mpegts")
 HLS_MUXER_CLOSE_AFTER = os.environ.get("IVELY_HLS_MUXER_CLOSE_AFTER", "300s")
 
