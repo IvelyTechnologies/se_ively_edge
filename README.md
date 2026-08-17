@@ -132,7 +132,7 @@ Camera/NVR (any codec: H.265, H.264, MJPEG, …)
         └── WebRTC :8889/{path}           ← lowest latency dashboard
 ```
 
-**HLS tuning (smooth live):** 1s segments, 10-segment window, GOP aligned to segment length, mpegts remux. Override via `IVELY_HLS_SEGMENT_DURATION`, `IVELY_HLS_SEGMENT_COUNT`, `IVELY_HLS_MUXER_CLOSE_AFTER`. For **mobile HLS via api.ivelytech.com**, set **`IVELY_HLS_CDN_SECRET`** (or `/opt/ively/agent/hls_cdn_secret`) — see **[docs/HLS_MOBILE_PROXY.md](docs/HLS_MOBILE_PROXY.md)**. For lowest delay use **WebRTC**; for stable mobile playback use **HLS** through the public proxy.
+**HLS tuning (smooth live):** 2s segments, 15-segment window, GOP aligned to segment length, mpegts remux. Override via `IVELY_HLS_SEGMENT_DURATION`, `IVELY_HLS_SEGMENT_COUNT`, `IVELY_HLS_MUXER_CLOSE_AFTER`. For **mobile HLS via api.ivelytech.com**, set **`IVELY_HLS_CDN_SECRET`** (or `/opt/ively/agent/hls_cdn_secret`) — see **[docs/HLS_MOBILE_PROXY.md](docs/HLS_MOBILE_PROXY.md)**. For lowest delay use **WebRTC**; for stable mobile playback use **HLS** through the public proxy.
 
 **Guarantees:**
 

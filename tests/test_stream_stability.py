@@ -6,6 +6,7 @@ from unittest.mock import patch
 from agent.camera.camera_worker import CameraWorker, CameraWorkerManager
 from agent.camera.freeze_detector import StreamFreezeDetector, StreamStatus
 from agent.camera.stream_recovery import recover_streams
+from agent.camera.mediamtx_writer import _ffmpeg_reorder_queue_size
 
 
 class FreezeDetectorTests(unittest.TestCase):
@@ -34,6 +35,16 @@ class FreezeDetectorTests(unittest.TestCase):
         with patch("agent.camera.freeze_detector.time.monotonic", return_value=31.0):
             self.assertEqual(StreamStatus.FROZEN, detector.get_status())
             self.assertTrue(detector.needs_restart())
+
+
+class LiveLatencySettingsTests(unittest.TestCase):
+    def test_reorder_queue_defaults_to_small_live_safe_value(self):
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual("64", _ffmpeg_reorder_queue_size())
+
+    def test_reorder_queue_is_bounded(self):
+        with patch.dict("os.environ", {"IVELY_FFMPEG_REORDER_QUEUE_SIZE": "9999"}, clear=True):
+            self.assertEqual("256", _ffmpeg_reorder_queue_size())
 
 
 class _Worker:
