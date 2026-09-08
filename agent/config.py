@@ -149,8 +149,10 @@ LOCAL_BUFFER_SEGMENT_SEC = 60  # each segment is 60 seconds
 LOCAL_BUFFER_MAX_DISK_PERCENT = float(os.environ.get("IVELY_BUFFER_MAX_DISK", "80.0"))
 
 # ---------------------------------------------------------------------------
-# HLS (MediaMTX + browser player) — smooth live with ~3–5s end-user latency
-# Override: IVELY_HLS_SEGMENT_DURATION=2s, IVELY_HLS_SEGMENT_COUNT=15
+# HLS (MediaMTX + browser player) — mobile-safe live with ~30s end-user latency.
+# Keep enough completed segments for a mobile client to play behind the live edge
+# instead of stalling while it waits for the next segment.
+# Override: IVELY_HLS_SEGMENT_DURATION=2s, IVELY_HLS_SEGMENT_COUNT=45
 # Keep mpegts (stable); fMP4/lowLatency caused MOOV errors on some clients.
 #
 # Mobile HLS via api.ivelytech.com /edge-stream/ requires hlsCDNSecret on the
@@ -159,7 +161,7 @@ LOCAL_BUFFER_MAX_DISK_PERCENT = float(os.environ.get("IVELY_BUFFER_MAX_DISK", "8
 # mediamtx.yml (rediscover cameras or restart agent pipeline).
 # ---------------------------------------------------------------------------
 HLS_SEGMENT_DURATION = os.environ.get("IVELY_HLS_SEGMENT_DURATION", "2s")
-HLS_SEGMENT_COUNT = int(os.environ.get("IVELY_HLS_SEGMENT_COUNT", "15"))
+HLS_SEGMENT_COUNT = int(os.environ.get("IVELY_HLS_SEGMENT_COUNT", "45"))
 HLS_VARIANT = os.environ.get("IVELY_HLS_VARIANT", "mpegts")
 HLS_MUXER_CLOSE_AFTER = os.environ.get("IVELY_HLS_MUXER_CLOSE_AFTER", "300s")
 
@@ -198,16 +200,17 @@ WEBRTC_ADDITIONAL_HOSTS = os.environ.get(
     "api.ivelytech.com",
 )
 
-# hls.js tuning for live MPEG-TS (passed to /view player)
+# hls.js tuning for live MPEG-TS (passed to /view player).
+# With 2-second segments this starts roughly 30 seconds behind live.
 HLS_JS_PLAYER_CONFIG = {
     "enableWorker": True,
-    "liveSyncDurationCount": 2,
-    "liveMaxLatencyDurationCount": 5,
-    "maxBufferLength": 8,
-    "maxMaxBufferLength": 12,
-    "backBufferLength": 0,
+    "liveSyncDurationCount": 15,
+    "liveMaxLatencyDurationCount": 25,
+    "maxBufferLength": 40,
+    "maxMaxBufferLength": 60,
+    "backBufferLength": 30,
     "stretchShortVideoTrack": True,
-    "maxLiveSyncPlaybackRate": 1.5,
+    "maxLiveSyncPlaybackRate": 1.0,
 }
 
 # ---------------------------------------------------------------------------
